@@ -257,6 +257,7 @@ else:
  1. 尝试调整左侧的 **波段灵敏度**。
  2. 尝试切换 **数据回溯时间**。
  3. 换一个近期波动较大的股票。")
+                
     
     # 即使没有结构，也画个简单的K线图给用户看
     fig_simple = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
