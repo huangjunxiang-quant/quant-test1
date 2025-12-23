@@ -311,23 +311,45 @@ def plot_chart(df, res, height=600):
 # ==============================================================================
 # 4. 分析逻辑 (Controller)
 # ==============================================================================
+# ==============================================================================
+# 4. 分析逻辑 (Controller) - 修复版
+# ==============================================================================
 def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
     try:
-        df = yf.download(ticker, period=lookback, interval=interval, progress=False, auto_adjust=False)
-        if isinstance(df.columns, pd.MultiIndex):
-            try: df.columns = df.columns.get_level_values(0)
-            except: pass
-        if len(df) < 30: return None
-        if not isinstance(df.index, pd.DatetimeIndex): df.index = pd.to_datetime(df.index)
+        # 🟢 修正 1: 改用 Ticker 对象下载，解决多线程数据冲突/重复问题
+        stock = yf.Ticker(ticker)
         
+        # 处理时间映射
+        real_period = lookback
+        if interval in ["5m", "15m"]: real_period = "60d"
+        elif interval == "1h": real_period = "1y"
+        
+        # 获取历史数据
+        df = stock.history(period=real_period, interval=interval)
+        
+        # 🟢 修正 2: 数据清洗增强
+        if df.empty or len(df) < 30: return None
+        
+        # 移除时区信息 (Plotly 有时会因为时区报错)
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+            
+        # 统一列名 (yf.Ticker 返回的是 Title Case: Open, High...)
+        # 确保不需要处理 MultiIndex，因为 .history() 返回的是单层索引
+        
+        # 2. 计算指标
         df = calculate_advanced_indicators(df)
         
         current_price = df['Close'].iloc[-1]
         current_rsi = df['RSI'].iloc[-1]
         current_atr = df['ATR'].iloc[-1]
         
-        trend_res = get_resistance_trendline(df, lookback=1000)
+        # 3. 寻找结构
+        # (A) 趋势线
+        lb_trend = 300 if interval in ["5m", "15m"] else 1000
+        trend_res = get_resistance_trendline(df, lookback=lb_trend)
         
+        # (B) ABC 结构
         abc_res = None
         pivots_df = get_swing_pivots_high_low(df, threshold=threshold)
         
@@ -341,24 +363,28 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
                         abc_res = {'pivots': (pA, pB, pC), 'target': target}
                         break 
 
+        # 4. 信号判定
         signal = "WAIT"
         signal_color = "gray"
         reasons = []
         
         is_breakout = trend_res and trend_res['breakout']
+        
         if is_breakout:
             signal = "🔥 趋势线突破"
             signal_color = "#00FFFF"
             reasons.append("长期下降趋势线被突破")
             
         if abc_res:
-            if current_price < abc_res['pivots'][1]['price'] and current_price > abc_res['pivots'][2]['price']:
+            # 这里的逻辑稍微放宽，只要有结构就算，具体是否买入由人判断
+            # 也可以加一个判定：价格是否在C点上方
+            if current_price > abc_res['pivots'][2]['price']:
                 if "突破" in signal:
                     signal = "🚀 双重共振买点"
                 else:
                     signal = "🟢 ABC 结构确立"
                     signal_color = "#00FF00"
-                reasons.append(f"回踩 C 点 (${abc_res['pivots'][2]['price']:.2f}) 确认")
+                reasons.append(f"回踩 C 点确认")
 
         stop_loss_atr = current_price - (2.0 * current_atr)
         option_plan = None
@@ -381,7 +407,12 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
         }
 
     except Exception as e:
+        # print(f"Error analyzing {ticker}: {e}") # 调试用
         return None
+        
+
+
+  
 
 # ==============================================================================
 # 5. UI 主程序
