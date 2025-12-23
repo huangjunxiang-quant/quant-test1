@@ -368,7 +368,12 @@ else:
             st.success(f"🎯 扫描完成！发现 {len(results)} 个潜在机会")
             
             # 遍历结果，生成可折叠的详细卡片
-            for r in results:
+            if results:
+            st.success(f"🎯 扫描完成！发现 {len(results)} 个潜在机会")
+            
+            # ⬇️⬇️⬇️ 这里的循环是改动点 ⬇️⬇️⬇️
+            # 我们加上 enumerate(results) 来获取索引 i，确保 key 绝对唯一
+            for i, r in enumerate(results):
                 # 标题栏显示关键信息
                 label = f"{r['ticker']} | ${r['price']:.2f} | {r['signal']} | RSI: {r['rsi']:.1f}"
                 
@@ -392,9 +397,12 @@ else:
                     fig.add_trace(go.Scatter(x=df.index, y=df['EMA_8'], line=dict(color='orange', width=1), name="EMA8"))
                     
                     fig.update_layout(template="plotly_dark", height=350, margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False)
-                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # 🔴 关键修复：加入了 key 参数
+                    st.plotly_chart(fig, use_container_width=True, key=f"chart_{r['ticker']}_{i}")
                     
                     if r['option_plan']:
                         st.caption(f"💡 期权建议: {r['option_plan']['legs']}")
+
         else:
             st.warning("本次扫描未发现高胜率信号，建议休息或调整监控列表。")
