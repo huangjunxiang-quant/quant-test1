@@ -363,12 +363,8 @@ else:
         
         progress_bar.empty()
         status_text.empty()
-        
+
         if results:
-            st.success(f"🎯 扫描完成！发现 {len(results)} 个潜在机会")
-            
-            # 遍历结果，生成可折叠的详细卡片
-            if results:
             st.success(f"🎯 扫描完成！发现 {len(results)} 个潜在机会")
             
             # ⬇️⬇️⬇️ 这里的循环是改动点 ⬇️⬇️⬇️
@@ -403,6 +399,8 @@ else:
                     
                     if r['option_plan']:
                         st.caption(f"💡 期权建议: {r['option_plan']['legs']}")
+        
+       
 
         else:
             st.warning("本次扫描未发现高胜率信号，建议休息或调整监控列表。")
