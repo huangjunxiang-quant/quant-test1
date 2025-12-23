@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 # ==============================================================================
 # 1. 页面配置与样式 (UI Configuration)
 # ==============================================================================
-st.set_page_config(page_title="Quant Sniper Pro (Final Ver)", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Quant Sniper Pro (5-Year Edition)", layout="wide", page_icon="⚡")
 
 st.markdown("""
 <style>
@@ -32,6 +32,7 @@ def calculate_advanced_indicators(df):
     # 1. EMA 趋势系统
     df['EMA_8'] = df['Close'].ewm(span=8, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
+    df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean() # 新增年线
     
     # 2. OBV 资金流
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
@@ -116,7 +117,7 @@ def get_swing_pivots(series, threshold=0.06):
                 temp_extreme_date = date
     return pd.DataFrame(pivots)
 
-def get_resistance_trendline(df, lookback=150):
+def get_resistance_trendline(df, lookback=1000): # 增加 lookback 以适应5年数据
     """ 强力趋势线拟合 (Scipy) """
     highs = df['High'].values
     if len(highs) < 30: return None
@@ -126,14 +127,14 @@ def get_resistance_trendline(df, lookback=150):
     subset_highs = highs[start_idx:]
     global_offset = start_idx
 
-    peak_indexes = argrelextrema(subset_highs, np.greater, order=3)[0]
+    peak_indexes = argrelextrema(subset_highs, np.greater, order=5)[0] # order=5 过滤小杂波
     if len(peak_indexes) < 2: return None
 
     best_line = None
     max_score = -float('inf')
     
     sorted_peaks = sorted(peak_indexes, key=lambda i: subset_highs[i], reverse=True)
-    potential_start_points = sorted_peaks[:3] 
+    potential_start_points = sorted_peaks[:5] # 尝试前5个最高点
 
     for idx_A in potential_start_points:
         price_A = subset_highs[idx_A]
@@ -152,7 +153,7 @@ def get_resistance_trendline(df, lookback=150):
                 if k <= idx_A: continue
                 trend_price = slope * k + intercept
                 actual_price = subset_highs[k]
-                tolerance = actual_price * 0.015
+                tolerance = actual_price * 0.02 # 2% 容错，适应长周期波动
                 
                 if abs(actual_price - trend_price) < tolerance:
                     hits += 1
@@ -193,7 +194,7 @@ def generate_option_plan(ticker, current_price, signal_type, rsi, expiry_hint="�
         if rsi > 70:
             plan['name'] = "⚠️ 风险警示 (RSI过热)"
             plan['strategy'] = "Debit Call Spread"
-            plan['legs'] = f"买 ${strike_buy} / 卖 ${strike_buy+5} Call"
+            plan['legs'] = f"买 ${strike_buy} / 卖 ${strike_buy+10} Call"
             plan['logic'] = "趋势向上但情绪过热，防止回调杀估值。"
         else:
             plan['name'] = "🚀 狙击 Call"
@@ -215,9 +216,9 @@ def plot_chart(df, res, height=600):
         name='Price'
     ))
     
-    # 2. EMA 均线
-    fig.add_trace(go.Scatter(x=df.index, y=df['EMA_8'], line=dict(color='orange', width=1), name="EMA 8"))
+    # 2. EMA 均线 (新增 EMA 200)
     fig.add_trace(go.Scatter(x=df.index, y=df['EMA_21'], line=dict(color='purple', width=1), name="EMA 21"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['EMA_200'], line=dict(color='white', width=1, dash='dot'), name="EMA 200 (牛熊线)"))
     
     # 3. 趋势线
     if res['trend']:
@@ -227,7 +228,7 @@ def plot_chart(df, res, height=600):
             mode='lines', name='Trendline', line=dict(color='cyan', width=2, dash='solid')
         ))
 
-    # 4. 🔥 斐波那契战术地图 (Fibonacci & Structure) - 修复版
+    # 4. 🔥 斐波那契拓展线 (Fibonacci Extensions) - 5年长线版
     if res['abc']:
         pA, pB, pC = res['abc']['pivots']
         
@@ -240,10 +241,11 @@ def plot_chart(df, res, height=600):
             marker=dict(size=8, symbol='circle-open')
         ))
         
-        # 计算高度与扩展位
+        # 计算高度
         height_AB = pB['price'] - pA['price']
         
-        # 定义斐波那契扩展位列表: (Ratio, Color, LineWidth, DashStyle, Label)
+        # 定义斐波那契拓展位 (趋势基础拓展 Trend-Based Fib Extension)
+        # 格式: (Ratio, Color, Width, Dash, Name)
         fib_levels = [
             (0.618, "gray", 1, "dot", "Fib 0.618"),
             (1.0, "gray", 1, "dash", "Fib 1.0 (AB=CD)"),
@@ -251,23 +253,25 @@ def plot_chart(df, res, height=600):
             (1.618, "#00FF00", 2, "solid", "🎯 Fib 1.618 (TP1)"),
             (2.0, "gray", 1, "dot", "Fib 2.0"),
             (2.618, "gold", 2, "solid", "🚀 Fib 2.618 (TP2)"),
-            (3.618, "red", 1, "dot", "Fib 3.618 (Max)")
+            (3.618, "red", 1, "dot", "Fib 3.618 (Max)"),
+            (4.236, "red", 1, "dot", "Fib 4.236 (Sky)")
         ]
         
         last_date = df.index[-1]
-        start_date = pC['date']
+        start_date = pC['date'] # 从 C 点开始画拓展线
         
-        # (B) 循环绘制所有 Fib 线
-        for ratio, color, width, style, label in fib_levels:
+        for ratio, color, width, dash, label in fib_levels:
             lvl_price = pC['price'] + height_AB * ratio
             
-            # 画线
-            fig.add_shape(type="line", x0=start_date, y0=lvl_price, x1=last_date, y1=lvl_price,
-                          line=dict(color=color, width=width, dash=style))
-            # 画标签
-            fig.add_annotation(x=last_date, y=lvl_price, text=label, 
-                               showarrow=False, xanchor="left", yanchor="middle",
-                               font=dict(color=color, size=10))
+            # 只有当价格在合理显示范围内时才画，避免压缩K线太厉害
+            if lvl_price > df['Low'].min() * 0.5:
+                # 画线
+                fig.add_shape(type="line", x0=start_date, y0=lvl_price, x1=last_date, y1=lvl_price,
+                              line=dict(color=color, width=width, dash=dash))
+                # 画标签
+                fig.add_annotation(x=last_date, y=lvl_price, text=label, 
+                                   showarrow=False, xanchor="left", yanchor="middle",
+                                   font=dict(color=color, size=10))
 
         # (C) 止损位 (Stop at A)
         fig.add_shape(type="line", x0=pA['date'], y0=pA['price'], x1=last_date, y1=pA['price'],
@@ -278,14 +282,14 @@ def plot_chart(df, res, height=600):
     if 'stop_loss_atr' in res:
         fig.add_hline(y=res['stop_loss_atr'], line_color="#FF4B4B", line_dash="dot", annotation_text="ATR Stop")
 
-    # 6. 布局优化 (加入 scrollZoom)
+    # 6. 布局优化 (Zoom & Pan 开启)
     fig.update_layout(
         template="plotly_dark", 
         height=height, 
         margin=dict(l=0,r=100,t=30,b=0), # 右侧留白给Fib标签
         xaxis_rangeslider_visible=False,
         hovermode="x unified",
-        dragmode='pan' # 默认拖拽模式为平移，更适合触摸屏
+        dragmode='pan' # 默认开启平移拖拽，适合触摸板
     )
     
     # 隐藏周末 (仅日线)
@@ -299,7 +303,7 @@ def plot_chart(df, res, height=600):
 # ==============================================================================
 # 4. 核心分析逻辑 (Brain)
 # ==============================================================================
-def analyze_ticker_pro(ticker, interval="1d", lookback="3mo", threshold=0.06):
+def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06): # 默认改为 5y
     try:
         # 1. 数据下载
         real_period = lookback
@@ -322,16 +326,15 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="3mo", threshold=0.06):
         current_atr = df['ATR'].iloc[-1]
         
         # 3. 模型运算
-        # (A) 趋势线
-        lb_trend = 300 if interval in ["5m", "15m"] else 150
+        # (A) 趋势线 - 使用更大的 lookback 以适应5年数据
+        lb_trend = 300 if interval in ["5m", "15m"] else 1000 # 约4年
         trend_res = get_resistance_trendline(df, lookback=lb_trend)
         
         # (B) ABC 结构
         abc_res = None
-        # 如果是扫描模式，为了速度，ABC阈值固定；单股模式用传入的 threshold
         pivots_df = get_swing_pivots(df['Close'], threshold=threshold)
         if len(pivots_df) >= 3:
-            # 简单寻找最近的一个有效 ABC
+            # 寻找最近的一个有效 ABC
             for i in range(len(pivots_df)-3, len(pivots_df)-2):
                 pA, pB, pC = pivots_df.iloc[i], pivots_df.iloc[i+1], pivots_df.iloc[i+2]
                 if (pA['type'] == -1 and pB['type'] == 1 and pC['type'] == -1) and \
@@ -414,19 +417,20 @@ HOT_STOCKS = [
 ]
 
 if mode == "🔍 单股狙击 (Live)":
-    st.title("🛡️ 狗蛋风控指挥舱 (Sniper Mode)")
+    st.title("🛡️ 狗蛋风控指挥舱 (5-Year Edition)")
     
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
         ticker = st.text_input("代码 (Ticker)", value="TSLA").upper()
     with c2:
-        interval = st.selectbox("K线周期", ["1d", "1h", "15m", "5m"], index=0)
+        # 修改：增加回溯时间选择，默认 5年
+        lookback = st.selectbox("数据回溯时间", ["1y", "2y", "5y", "10y", "max"], index=2)
     with c3:
         threshold_days = st.slider("结构灵敏度", 0.03, 0.12, 0.06, 0.01)
 
-    with st.spinner(f"正在分析 {ticker} ..."):
-        # 将输入参数传入
-        res = analyze_ticker_pro(ticker, interval=interval, threshold=threshold_days)
+    with st.spinner(f"正在下载 {lookback} 数据并分析 {ticker} ..."):
+        # 将输入参数传入，interval 默认为 1d
+        res = analyze_ticker_pro(ticker, interval="1d", lookback=lookback, threshold=threshold_days)
         
         if res:
             # 1. 核心指标
@@ -449,7 +453,7 @@ if mode == "🔍 单股狙击 (Live)":
                 qty = calculate_position_size(account_size, risk_per_trade_pct, res['price'], res['stop_loss_atr'])
                 st.success(f"🎯 **风控指令:** 建议买入 **{qty}** 股 (基于 {risk_per_trade_pct*100}% 风险，止损 ${res['stop_loss_atr']:.2f})")
 
-            # 4. 强力绘图 (带完整斐波那契 + 缩放开启)
+            # 4. 强力绘图 (开启 Zoom)
             fig = plot_chart(res['data'], res, height=600)
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': True})
 
@@ -463,7 +467,7 @@ if mode == "🔍 单股狙击 (Live)":
 
 else:
     # 批量扫描模式
-    st.title("🚀 市场全境扫描 (Hot 50)")
+    st.title("🚀 市场全境扫描 (Hot 50 - 5 Year View)")
     
     col_scan1, col_scan2 = st.columns([3, 1])
     with col_scan1:
@@ -480,9 +484,9 @@ else:
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # 线程池并发扫描
+        # 线程池并发扫描，扫描也使用 5年 数据
         def scan_one(t):
-            return analyze_ticker_pro(t, interval="1d", lookback="6mo")
+            return analyze_ticker_pro(t, interval="1d", lookback="5y")
 
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {executor.submit(scan_one, t): t for t in tickers}
@@ -501,7 +505,6 @@ else:
         if results:
             st.success(f"🎯 扫描完成！发现 {len(results)} 个潜在机会")
             
-            # 使用 enumerate 生成唯一 Key，修复 DuplicateElementId 错误
             for i, r in enumerate(results):
                 label = f"{r['ticker']} | ${r['price']:.2f} | {r['signal']} | RSI: {r['rsi']:.1f}"
                 
@@ -513,10 +516,7 @@ else:
                     
                     st.write(f"**触发逻辑:** {r['reasons']}")
                     
-                    # 复用强力绘图函数
                     fig = plot_chart(r['data'], r, height=400)
-                    
-                    # 🔴 关键修复：加入 key 参数 + 缩放开启
                     st.plotly_chart(fig, use_container_width=True, key=f"chart_{r['ticker']}_{i}", config={'scrollZoom': True, 'displayModeBar': True})
                     
                     if r['option_plan']:
