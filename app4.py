@@ -10,7 +10,7 @@ from datetime import timedelta
 # ==============================================================================
 # 1. 页面配置与样式
 # ==============================================================================
-st.set_page_config(page_title="Quant Sniper Pro (Bi-Directional Fixed)", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Quant Sniper Pro (Hot 50 Edition)", layout="wide", page_icon="⚡")
 
 st.markdown("""
 <style>
@@ -22,11 +22,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. 核心数学算法
+# 2. 核心数学算法 (Core Algorithms)
 # ==============================================================================
 
 def get_swing_pivots_high_low(df, threshold=0.06):
-    """ ZigZag 算法 (High/Low) """
+    """ [精度升级版] ZigZag 算法 (High/Low) """
     pivots = []
     last_pivot_price = df['Close'].iloc[0]
     last_pivot_date = df.index[0]
@@ -75,7 +75,7 @@ def get_swing_pivots_high_low(df, threshold=0.06):
                 
     return pd.DataFrame(pivots)
 
-# --- 🟢 阻力趋势线 (看多) ---
+# --- 🟢 阻力趋势线 (蓝色看多线) ---
 def get_resistance_trendline(df, lookback=1000):
     highs = df['High'].values
     if len(highs) < 30: return None
@@ -85,12 +85,14 @@ def get_resistance_trendline(df, lookback=1000):
     subset_highs = highs[start_idx:]
     global_offset = start_idx
 
+    # 使用 order=5 过滤局部高点
     peak_indexes = argrelextrema(subset_highs, np.greater, order=5)[0]
     if len(peak_indexes) < 2: return None
 
     best_line = None
     max_score = -float('inf')
     
+    # 尝试连接前5个最高点
     sorted_peaks = sorted(peak_indexes, key=lambda i: subset_highs[i], reverse=True)
     potential_start_points = sorted_peaks[:5]
 
@@ -99,7 +101,7 @@ def get_resistance_trendline(df, lookback=1000):
         for idx_B in peak_indexes:
             if idx_B <= idx_A: continue 
             price_B = subset_highs[idx_B]
-            if price_B >= price_A: continue 
+            if price_B >= price_A: continue # 必须是下降趋势
             
             slope = (price_B - price_A) / (idx_B - idx_A)
             intercept = price_A - slope * idx_A
@@ -110,6 +112,8 @@ def get_resistance_trendline(df, lookback=1000):
                 if k <= idx_A: continue
                 trend_price = slope * k + intercept
                 actual_price = subset_highs[k]
+                
+                # 拟合打分逻辑
                 if abs(actual_price - trend_price) < actual_price * 0.02: hits += 1
                 elif actual_price > trend_price * 1.02: violations += 1
             
@@ -133,11 +137,12 @@ def get_resistance_trendline(df, lookback=1000):
             'x2': df.index[last_idx], 
             'y2': trendline_price_now,
             'price_now': trendline_price_now,
+            # 🟢 关键：突破判断
             'breakout': df['Close'].iloc[-1] > trendline_price_now
         }
     return None
 
-# --- 🔴 支撑趋势线 (看空) ---
+# --- 🔴 支撑趋势线 (紫色看空线) ---
 def get_support_trendline(df, lookback=1000):
     lows = df['Low'].values
     if len(lows) < 30: return None
@@ -194,7 +199,7 @@ def get_support_trendline(df, lookback=1000):
             'x2': df.index[last_idx], 
             'y2': trendline_price_now,
             'price_now': trendline_price_now,
-            'breakdown': df['Close'].iloc[-1] < trendline_price_now # 跌破！
+            'breakdown': df['Close'].iloc[-1] < trendline_price_now
         }
     return None
 
@@ -220,7 +225,10 @@ def calculate_position_size(account_balance, risk_pct, entry_price, stop_loss):
     if entry_price == stop_loss: return 0
     risk_per_share = abs(entry_price - stop_loss)
     total_risk_allowance = account_balance * risk_pct
-    position_size = int(total_risk_allowance / risk_per_share)
+    try:
+        position_size = int(total_risk_allowance / risk_per_share)
+    except:
+        position_size = 0
     return position_size
 
 def generate_option_plan(ticker, current_price, signal_type, rsi):
@@ -342,26 +350,23 @@ def plot_chart(df, res, height=600):
     return fig
 
 # ==============================================================================
-# 4. 分析逻辑 (Controller) - 核心修正版
+# 4. 分析逻辑 (Controller)
 # ==============================================================================
 def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
     try:
-        # 🟢 修正：使用 Ticker 对象下载，防止多线程数据冲突
+        # 使用 yf.Ticker 防止多线程数据混淆
         stock = yf.Ticker(ticker)
         
         real_period = lookback
         if interval in ["5m", "15m"]: real_period = "60d"
         elif interval == "1h": real_period = "1y"
         
-        # 获取历史数据
+        # 获取数据
         df = stock.history(period=real_period, interval=interval)
         
         if df.empty or len(df) < 30: return None
+        if df.index.tz is not None: df.index = df.index.tz_localize(None)
         
-        # 🟢 修正：移除时区
-        if df.index.tz is not None:
-            df.index = df.index.tz_localize(None)
-            
         df = calculate_advanced_indicators(df)
         
         current_price = df['Close'].iloc[-1]
@@ -370,8 +375,8 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
         
         # (A) 趋势线分析 (双向)
         lb_trend = 300 if interval in ["5m", "15m"] else 1000
-        trend_res = get_resistance_trendline(df, lookback=lb_trend) # 阻力线
-        trend_sup = get_support_trendline(df, lookback=lb_trend)    # 支撑线 (做空)
+        trend_res = get_resistance_trendline(df, lookback=lb_trend) # 阻力线 (蓝)
+        trend_sup = get_support_trendline(df, lookback=lb_trend)    # 支撑线 (紫)
         
         # (B) ABC 结构
         abc_res = None
@@ -396,7 +401,7 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
         if is_breakout:
             signal = "🔥 向上突破"
             signal_color = "#00FFFF"
-            reasons.append("突破长期下降阻力")
+            reasons.append("突破长期下降阻力 (蓝线)")
             
         if abc_res and current_price > abc_res['pivots'][2]['price']:
             if "突破" in signal: signal = "🚀 双重共振买点"
@@ -405,13 +410,13 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
                 signal_color = "#00FF00"
             reasons.append("回踩C点确认")
 
-        # 看空信号 (优先级：高于无信号，低于双重共振)
+        # 看空信号 (趋势线跌破)
         is_breakdown = trend_sup and trend_sup['breakdown']
         if is_breakdown:
-            if "双重" not in signal:
+            if "双重" not in signal: # 如果不是超强多头，则允许显示空头
                 signal = "📉 趋势线跌破"
                 signal_color = "#FF00FF"
-                reasons.append("跌破长期上升支撑")
+                reasons.append("跌破长期上升支撑 (紫线)")
 
         # 止损位计算
         if "跌破" in signal:
@@ -433,7 +438,7 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
             "atr": current_atr,
             "stop_loss_atr": stop_loss_level,
             "trend_res": trend_res,
-            "trend_sup": trend_sup, # 返回支撑线
+            "trend_sup": trend_sup,
             "abc": abc_res,
             "data": df,
             "option_plan": option_plan
@@ -453,7 +458,23 @@ risk_per_trade_pct = st.sidebar.slider("单笔风险 (%)", 0.5, 5.0, 2.0, 0.5) /
 st.sidebar.markdown("---")
 mode = st.sidebar.radio("作战模式:", ["🔍 单股狙击 (Live)", "🚀 市场全境扫描 (Hot 50)"])
 
-HOT_STOCKS = ["TSLA", "NVDA", "PLTR", "MSTR", "COIN", "AMD", "META", "AMZN", "GOOG", "MSFT", "AAPL", "MARA", "RIOT", "CLSK", "NFLX"]
+# 🔥🔥 热门 50 股池 (包含科技巨头、芯片、AI、Crypto、高波动股)
+HOT_STOCKS_LIST = [
+    # Mag 7 & Big Tech
+    "TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NFLX",
+    # Chips & AI
+    "AMD", "AVGO", "TSM", "SMCI", "ARM", "MU", "INTC", "PLTR", "AI", "PATH", "SNOW", "CRWD", "PANW",
+    # Crypto & Blockchain
+    "MSTR", "COIN", "MARA", "RIOT", "CLSK", "HOOD",
+    # High Growth & Volatility
+    "UPST", "AFRM", "SOFI", "CVNA", "RIVN", "LCID", "DKNG", "RBLX", "U", "NET",
+    # China Tech (Volatile)
+    "BABA", "PDD", "NIO", "XPEV", "LI", "JD",
+    # Meme / Retail Favorites
+    "GME", "AMC", "SPCE", 
+    # ETFs (Leveraged)
+    "TQQQ", "SOXL"
+]
 
 if mode == "🔍 单股狙击 (Live)":
     st.title("🛡️ 狗蛋风控指挥舱 (Bi-Directional Fixed)")
@@ -479,7 +500,6 @@ if mode == "🔍 单股狙击 (Live)":
             </div>
             """, unsafe_allow_html=True)
             
-            # 只有出现信号时才建议仓位
             if "WAIT" not in res['signal']:
                 qty = calculate_position_size(account_size, risk_per_trade_pct, res['price'], res['stop_loss_atr'])
                 direction = "做空/卖出" if "跌破" in res['signal'] else "买入"
@@ -489,7 +509,6 @@ if mode == "🔍 单股狙击 (Live)":
             fig = plot_chart(res['data'], res, height=600)
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': True})
 
-            # 关键点位表
             if res['abc']:
                 pA, pB, pC = res['abc']['pivots']
                 height_AB = pB['price'] - pA['price']
@@ -505,11 +524,11 @@ if mode == "🔍 单股狙击 (Live)":
                     p = res['option_plan']
                     st.info(f"**{p['name']}**: {p['legs']} | {p['logic']}")
         else:
-            st.error("数据获取失败。")
+            st.error("数据获取失败，请检查代码拼写或网络。")
 
 else:
     st.title("🚀 市场全境扫描 (Hot 50)")
-    tickers_input = st.text_area("监控列表", value=", ".join(HOT_STOCKS), height=100)
+    tickers_input = st.text_area("监控列表 (Hot 50)", value=", ".join(HOT_STOCKS_LIST), height=120)
     
     if st.button("⚡ 开始扫描"):
         tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
@@ -517,14 +536,14 @@ else:
         results = []
         
         def scan_one(t):
-            # 扫描模式使用 5年 默认回溯
+            # 扫描时同样使用 5年 回溯，保证趋势线逻辑一致
             return analyze_ticker_pro(t, interval="1d", lookback="5y", threshold=0.08)
 
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {executor.submit(scan_one, t): t for t in tickers}
             for i, future in enumerate(futures):
                 r = future.result()
-                # 扫描条件：多头信号 或 空头信号
+                # 筛选逻辑：ABC结构 OR 向上突破 OR 向下跌破
                 if r and ("ABC" in r['signal'] or "突破" in r['signal'] or "跌破" in r['signal']):
                     results.append(r)
                 progress_bar.progress((i + 1) / len(tickers))
@@ -537,6 +556,7 @@ else:
                 with st.expander(f"{r['ticker']} | ${r['price']:.2f} | {r['signal']}", expanded=False):
                     st.write(f"逻辑: {r['reasons']}")
                     if "跌破" in r['signal']: st.warning("📉 注意：这是做空信号！")
+                    if "突破" in r['signal']: st.success("🔥 注意：这是蓝色趋势线突破！")
                     
                     if r['abc']:
                         pA, pB, pC = r['abc']['pivots']
