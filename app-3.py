@@ -10,27 +10,25 @@ from datetime import timedelta
 # ==============================================================================
 # 1. 页面配置与样式 (UI Configuration)
 # ==============================================================================
-st.set_page_config(page_title="Quant Sniper Pro (Price Levels)", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Quant Sniper Pro (Fixed)", layout="wide", page_icon="⚡")
 
 st.markdown("""
 <style>
     .metric-card { background-color: #1e1e1e; border: 1px solid #333; padding: 15px; border-radius: 8px; text-align: center; }
-    /* 调整 Toast */
     .stToast { background-color: #333; color: white; }
-    /* 侧边栏优化 */
     [data-testid="stSidebar"] { background-color: #111; }
-    /* 表格样式 */
     [data-testid="stDataFrame"] { width: 100%; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. 核心数学算法 (Core Algorithms)
+# 2. 核心数学算法 (Core Algorithms) - 保持不变
 # ==============================================================================
 
 def get_swing_pivots_high_low(df, threshold=0.06):
     """ [精度升级版] ZigZag 算法 """
     pivots = []
+    # 此时 df 肯定有数据，直接取
     last_pivot_price = df['Close'].iloc[0]
     last_pivot_date = df.index[0]
     last_pivot_type = 0 
@@ -88,6 +86,7 @@ def get_resistance_trendline(df, lookback=1000):
     subset_highs = highs[start_idx:]
     global_offset = start_idx
 
+    # 这里的 order=5 是为了过滤杂波，保持原来的逻辑
     peak_indexes = argrelextrema(subset_highs, np.greater, order=5)[0]
     if len(peak_indexes) < 2: return None
 
@@ -147,6 +146,7 @@ def get_resistance_trendline(df, lookback=1000):
     return None
 
 def calculate_advanced_indicators(df):
+    # 简单计算指标
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
     df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
@@ -260,18 +260,18 @@ def plot_chart(df, res, height=600):
         for ratio, color, width, dash, label in fib_levels:
             lvl_price = pC['price'] + height_AB * ratio
             
-            # 价格过滤
+            # 价格过滤 (只画在合理范围内的)
             if lvl_price > df['Low'].min() * 0.5 and lvl_price < df['High'].max() * 3:
                 fig.add_shape(type="line", x0=start_date, y0=lvl_price, x1=future_date, y1=lvl_price,
                               line=dict(color=color, width=width, dash=dash))
                 
-                # 🟢 重点：在图上直接显示价格
+                # 图上价格标签
                 label_text = f"{label}: ${lvl_price:.2f}"
                 
                 fig.add_annotation(x=last_date, y=lvl_price, text=label_text, 
                                    showarrow=False, xanchor="left", yanchor="bottom",
                                    font=dict(color=color, size=11, family="Arial Black"),
-                                   bgcolor="rgba(0,0,0,0.5)") # 加个背景色防止看不清
+                                   bgcolor="rgba(0,0,0,0.5)")
 
         # (C) 止损线
         fig.add_shape(type="line", x0=pA['date'], y0=pA['price'], x1=future_date, y1=pA['price'],
@@ -283,13 +283,13 @@ def plot_chart(df, res, height=600):
     if 'stop_loss_atr' in res:
         fig.add_hline(y=res['stop_loss_atr'], line_color="#FF4B4B", line_dash="dot", annotation_text="ATR Stop")
 
-    # 6. 默认缩放 3个月
+    # 6. 默认缩放 (最近3个月)
     default_start_date = df.index[-1] - timedelta(days=90)
     
     fig.update_layout(
         template="plotly_dark", 
         height=height, 
-        margin=dict(l=0,r=120,t=30,b=0), # 右侧留更多白给价格标签
+        margin=dict(l=0,r=120,t=30,b=0),
         xaxis_rangeslider_visible=False,
         hovermode="x unified",
         dragmode='pan',
@@ -309,17 +309,14 @@ def plot_chart(df, res, height=600):
     return fig
 
 # ==============================================================================
-# 4. 分析逻辑 (Controller)
-# ==============================================================================
-# ==============================================================================
-# 4. 分析逻辑 (Controller) - 修复版
+# 4. 分析逻辑 (Controller) - 核心修正版
 # ==============================================================================
 def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
     try:
-        # 🟢 修正 1: 改用 Ticker 对象下载，解决多线程数据冲突/重复问题
+        # 🟢 修正：使用 Ticker 对象下载，防止多线程数据冲突
         stock = yf.Ticker(ticker)
         
-        # 处理时间映射
+        # 映射周期
         real_period = lookback
         if interval in ["5m", "15m"]: real_period = "60d"
         elif interval == "1h": real_period = "1y"
@@ -327,15 +324,14 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
         # 获取历史数据
         df = stock.history(period=real_period, interval=interval)
         
-        # 🟢 修正 2: 数据清洗增强
+        # 数据清洗
         if df.empty or len(df) < 30: return None
         
-        # 移除时区信息 (Plotly 有时会因为时区报错)
+        # 🟢 修正：移除时区，统一为无时区时间，防止 Plotly 报错
         if df.index.tz is not None:
             df.index = df.index.tz_localize(None)
             
-        # 统一列名 (yf.Ticker 返回的是 Title Case: Open, High...)
-        # 确保不需要处理 MultiIndex，因为 .history() 返回的是单层索引
+        # 🟢 修正：yf.Ticker 返回的列名通常是 Open/High/Low/Close，没有 MultiIndex，安全
         
         # 2. 计算指标
         df = calculate_advanced_indicators(df)
@@ -346,8 +342,7 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
         
         # 3. 寻找结构
         # (A) 趋势线
-        lb_trend = 300 if interval in ["5m", "15m"] else 1000
-        trend_res = get_resistance_trendline(df, lookback=lb_trend)
+        trend_res = get_resistance_trendline(df, lookback=1000)
         
         # (B) ABC 结构
         abc_res = None
@@ -369,15 +364,13 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
         reasons = []
         
         is_breakout = trend_res and trend_res['breakout']
-        
         if is_breakout:
             signal = "🔥 趋势线突破"
             signal_color = "#00FFFF"
             reasons.append("长期下降趋势线被突破")
             
         if abc_res:
-            # 这里的逻辑稍微放宽，只要有结构就算，具体是否买入由人判断
-            # 也可以加一个判定：价格是否在C点上方
+            # 只要有结构就算，具体是否是买点由用户看图判断，或者你可以加 price > C
             if current_price > abc_res['pivots'][2]['price']:
                 if "突破" in signal:
                     signal = "🚀 双重共振买点"
@@ -407,12 +400,7 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
         }
 
     except Exception as e:
-        # print(f"Error analyzing {ticker}: {e}") # 调试用
         return None
-        
-
-
-  
 
 # ==============================================================================
 # 5. UI 主程序
@@ -428,7 +416,7 @@ mode = st.sidebar.radio("作战模式:", ["🔍 单股狙击 (Live)", "🚀 市�
 HOT_STOCKS = ["TSLA", "NVDA", "PLTR", "MSTR", "COIN", "AMD", "META", "AMZN", "GOOG", "MSFT", "AAPL", "MARA", "RIOT", "CLSK", "NFLX"]
 
 if mode == "🔍 单股狙击 (Live)":
-    st.title("🛡️ 狗蛋风控指挥舱 (Precision)")
+    st.title("🛡️ 狗蛋风控指挥舱 (Fixed)")
     
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
@@ -462,30 +450,24 @@ if mode == "🔍 单股狙击 (Live)":
             fig = plot_chart(res['data'], res, height=600)
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': True})
 
-            # 🟢 重点：在图表下方显示具体的点位价格表
+            # 🟢 显示具体价格表
             if res['abc']:
                 pA, pB, pC = res['abc']['pivots']
                 height_AB = pB['price'] - pA['price']
                 
-                # 计算关键点位列表
                 levels_data = []
-                # 基础点
-                levels_data.append({"Level": "⛔ Stop Loss (A点)", "Price": pA['price'], "Type": "Risk"})
-                levels_data.append({"Level": "🔵 Entry Support (C点)", "Price": pC['price'], "Type": "Entry"})
-                # 斐波那契位
+                levels_data.append({"Level": "⛔ Stop Loss (A)", "Price": pA['price']})
+                levels_data.append({"Level": "🔵 Entry (C)", "Price": pC['price']})
+                
                 fib_ratios = [0.618, 1.0, 1.272, 1.618, 2.0, 2.618, 3.618]
                 for r in fib_ratios:
                     price = pC['price'] + height_AB * r
                     note = "🎯 TP1" if r==1.618 else "🚀 TP2" if r==2.618 else ""
-                    levels_data.append({"Level": f"Fib {r} {note}", "Price": price, "Type": "Target"})
+                    levels_data.append({"Level": f"Fib {r} {note}", "Price": price})
                 
                 df_levels = pd.DataFrame(levels_data)
-                
-                st.markdown("### 🔢 关键交易点位清单 (Key Levels)")
-                st.dataframe(
-                    df_levels.style.format({"Price": "${:.2f}"}),
-                    use_container_width=True
-                )
+                st.markdown("### 🔢 关键交易点位")
+                st.dataframe(df_levels.style.format({"Price": "${:.2f}"}), use_container_width=True)
 
             if res['option_plan']:
                 with st.expander("⚡ 查看期权建议", expanded=True):
@@ -522,12 +504,11 @@ else:
                 with st.expander(f"{r['ticker']} | ${r['price']:.2f} | {r['signal']}", expanded=False):
                     st.write(f"逻辑: {r['reasons']}")
                     
-                    # 扫描模式也加上价格清单
                     if r['abc']:
                         pA, pB, pC = r['abc']['pivots']
                         h = pB['price'] - pA['price']
                         t1 = pC['price'] + h * 1.618
-                        st.code(f"止损(A): ${pA['price']:.2f} | 目标(1.618): ${t1:.2f}")
+                        st.code(f"A(止损): ${pA['price']:.2f} | C(支撑): ${pC['price']:.2f} | 目标1.618: ${t1:.2f}")
                     
                     fig = plot_chart(r['data'], r, height=400)
                     st.plotly_chart(fig, use_container_width=True, key=f"chart_{i}", config={'scrollZoom': True})
