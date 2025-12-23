@@ -175,6 +175,14 @@ def calculate_advanced_indicators(df):
     
     return df
 
+def calculate_position_size(account_balance, risk_pct, entry_price, stop_loss):
+    """ 凯利公式简化版：仓位计算器 """
+    if entry_price <= stop_loss: return 0
+    risk_per_share = entry_price - stop_loss
+    total_risk_allowance = account_balance * risk_pct
+    position_size = int(total_risk_allowance / risk_per_share)
+    return position_size
+
 def generate_option_plan(ticker, current_price, signal_type, rsi):
     import math
     plan = {}
@@ -491,3 +499,4 @@ else:
                     st.plotly_chart(fig, use_container_width=True, key=f"chart_{i}", config={'scrollZoom': True})
         else:
             st.warning("暂无信号")
+            
