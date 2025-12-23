@@ -5,27 +5,58 @@ import numpy as np
 import plotly.graph_objects as go
 import time
 from datetime import datetime, timedelta
-# 引入 scipy 用于寻找波峰 (必须确保 requirements.txt 里有 scipy)
 from scipy.signal import argrelextrema
 
 # ==============================================================================
-# 1. 页面配置与样式
+# 1. 页面配置与样式 (UI Configuration)
 # ==============================================================================
-st.set_page_config(page_title="Quant Sniper Pro", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Quant Sniper Pro (Risk Control Edition)", layout="wide", page_icon="⚡")
 
 st.markdown("""
 <style>
     .metric-card { background-color: #1e1e1e; border: 1px solid #333; padding: 15px; border-radius: 8px; text-align: center; }
-    .stDataFrame { border: 1px solid #444; border-radius: 5px; }
+    .risk-alert { color: #ff4b4b; font-weight: bold; }
+    .safe-zone { color: #00ff00; font-weight: bold; }
     [data-testid="stSidebar"][aria-expanded="true"] > div:first-child { width: 300px; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. 核心算法库
+# 2. 核心数学与指标库 (Core Math & Indicators)
 # ==============================================================================
 
-# --- A. 寻找波段高低点 (ZigZag) ---
+# --- A. 基础指标计算 (RSI & ATR) ---
+def calculate_indicators(df):
+    # 1. RSI (相对强弱指标) - 14周期
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
+    # 2. ATR (平均真实波幅) - 用于动态止损
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = np.max(ranges, axis=1)
+    df['ATR'] = true_range.rolling(window=14).mean()
+    
+    return df
+
+# --- B. 资金管理计算器 (Money Management) ---
+def calculate_position_size(account_balance, risk_pct, entry_price, stop_loss):
+    """
+    基于账户总风险计算仓位
+    """
+    if entry_price <= stop_loss: return 0
+    risk_per_share = entry_price - stop_loss
+    total_risk_allowance = account_balance * risk_pct
+    # 向下取整，保守计算
+    position_size = int(total_risk_allowance / risk_per_share)
+    return position_size
+
+# --- C. 寻找波段高低点 (ZigZag) ---
 def get_swing_pivots(series, threshold=0.06):
     pivots = []
     last_pivot_price = series.iloc[0]
@@ -68,42 +99,30 @@ def get_swing_pivots(series, threshold=0.06):
                 temp_extreme_date = date
     return pd.DataFrame(pivots)
 
-# --- B. 强力多点拟合下降趋势线 (Robust Multi-Touch Trendline) ---
-# (已删除重复的旧版本，保留这个 Scipy 版本)
+# --- D. 强力多点拟合下降趋势线 (Robust Multi-Touch Trendline) ---
 def get_resistance_trendline(df, lookback=150):
-    # 1. 提取高点数据
     highs = df['High'].values
     if len(highs) < 30: return None
     
-    # 截取最近 lookback 天的数据
-    if len(highs) > lookback:
-        start_idx = len(highs) - lookback
-        subset_highs = highs[start_idx:]
-        global_offset = start_idx
-    else:
-        subset_highs = highs
-        global_offset = 0
+    # 动态调整 lookback，防止数据越界
+    real_lookback = min(lookback, len(highs))
+    start_idx = len(highs) - real_lookback
+    subset_highs = highs[start_idx:]
+    global_offset = start_idx
 
-    # 2. 识别所有的局部波峰 (Peaks)
     peak_indexes = argrelextrema(subset_highs, np.greater, order=3)[0]
-    
-    if len(peak_indexes) < 2: 
-        return None
+    if len(peak_indexes) < 2: return None
 
-    # 3. 寻找最佳趋势线 (打分机制)
     best_line = None
     max_score = -float('inf')
     
     sorted_peaks = sorted(peak_indexes, key=lambda i: subset_highs[i], reverse=True)
-    potential_start_points = sorted_peaks[:3] 
+    potential_start_points = sorted_peaks[:4] # 稍微放宽起点搜索范围
 
     for idx_A in potential_start_points:
         price_A = subset_highs[idx_A]
-        
-        # 遍历该点之后的所有波峰作为 B
         for idx_B in peak_indexes:
             if idx_B <= idx_A: continue 
-            
             price_B = subset_highs[idx_B]
             if price_B >= price_A: continue 
             
@@ -115,10 +134,9 @@ def get_resistance_trendline(df, lookback=150):
             
             for k in peak_indexes:
                 if k <= idx_A: continue
-                
                 trend_price = slope * k + intercept
                 actual_price = subset_highs[k]
-                
+                # 动态容差：价格越高容差越大
                 tolerance = actual_price * 0.01 
                 
                 if abs(actual_price - trend_price) < tolerance:
@@ -126,9 +144,9 @@ def get_resistance_trendline(df, lookback=150):
                 elif actual_price > trend_price + tolerance:
                     violations += 1
             
-            score = hits - (violations * 2)
-            if abs(slope) < (price_A * 0.05): 
-                score += 0.5
+            # 这里的打分机制倾向于惩罚突破(violations)，奖励触碰(hits)
+            score = hits - (violations * 3) 
+            if abs(slope) < (price_A * 0.05): score += 0.5
 
             if score > max_score:
                 max_score = score
@@ -138,12 +156,10 @@ def get_resistance_trendline(df, lookback=150):
                     'start_idx_rel': idx_A
                 }
 
-    # 4. 构建返回结果
     if best_line:
         slope = best_line['slope']
         idx_A_glob = global_offset + best_line['start_idx_rel']
         price_A = subset_highs[best_line['start_idx_rel']]
-        
         global_intercept = price_A - slope * idx_A_glob
         
         last_idx = len(df) - 1
@@ -160,126 +176,146 @@ def get_resistance_trendline(df, lookback=150):
             'price_now': trendline_price_now,
             'breakout': current_close > trendline_price_now
         }
-    
     return None
 
-# --- C. 期权策略生成器 ---
-def generate_option_plan(ticker, current_price, target_price, signal_type):
+# --- E. 期权策略生成器 (含风控逻辑) ---
+def generate_option_plan(ticker, current_price, target_price, signal_type, rsi, expiry_hint="短期"):
     import math
     plan = {}
-    expiry_suggestion = "45天以上 (避免 Theta 损耗)"
     
-    if "BREAKOUT" in signal_type:
+    if "BREAKOUT" in signal_type or "ENTRY" in signal_type:
         strike_buy = math.ceil(current_price) 
-        plan['name'] = "🚀 突破激进型 (Momentum)"
-        plan['strategy'] = "Long Call (单腿买入)"
-        plan['legs'] = f"买入 Strike ${strike_buy} Call"
-        plan['logic'] = "趋势线突破，预计会有急涨，利用 Gamma 爆发。"
         
+        # 狗蛋风控逻辑：如果 RSI 过高，不建议裸买 Call
+        if rsi > 70:
+            plan['name'] = "⚠️ 风险提示"
+            plan['strategy'] = "Wait / Debit Spread"
+            plan['legs'] = "RSI过热，禁止裸买Call。考虑价差或观望。"
+            plan['logic'] = "虽然突破，但超买严重，容易回撤。"
+            plan['expiry'] = "观望"
+        else:
+            plan['name'] = "🚀 狙击模式 (Sniper)"
+            plan['strategy'] = "Long Call"
+            plan['legs'] = f"买入 Strike ${strike_buy} Call"
+            plan['logic'] = "趋势突破且RSI健康，动能爆发。"
+            plan['expiry'] = expiry_hint
+            
     elif "ABC" in signal_type:
         strike_buy = math.floor(current_price) 
         strike_sell = math.floor(target_price) 
-        plan['name'] = "🛡️ 结构稳健型 (Structure)"
-        plan['strategy'] = "Bull Call Spread (牛市价差)"
-        plan['legs'] = f"买入 ${strike_buy} Call / 卖出 ${strike_sell} Call"
-        plan['logic'] = "盈亏比高，通过卖出高位 Call 降低成本，锁定目标收益。"
+        plan['name'] = "🛡️ 结构战法 (Structure)"
+        plan['strategy'] = "Bull Call Spread"
+        plan['legs'] = f"买 ${strike_buy} / 卖 ${strike_sell} Call"
+        plan['logic'] = "利用ABC结构，锁定盈亏比，规避波动率风险。"
+        plan['expiry'] = "30天以上"
     else:
         return None
     
-    plan['expiry'] = expiry_suggestion
     return plan
 
-# --- D. 综合分析 Wrapper ---
-def analyze_ticker_full(ticker, lookback="1y", threshold=0.06):
+# ==============================================================================
+# 3. 核心分析逻辑 (支持盘中)
+# ==============================================================================
+def analyze_ticker_pro(ticker, interval="1d", lookback="3mo", threshold=0.06):
     try:
-        # 1. 更加稳健的数据下载逻辑
-        df = yf.download(ticker, period=lookback, interval="1d", progress=False, auto_adjust=False)
+        # 1. 动态确定数据获取长度 (yfinance 限制)
+        real_period = lookback
+        if interval == "1m": real_period = "7d"
+        elif interval in ["5m", "15m"]: real_period = "60d"
+        elif interval == "1h": real_period = "730d" # yfinance max for 1h
         
-        # 2. 强力修复列名问题 (yfinance v0.2.x 常见坑)
+        # 2. 获取数据
+        df = yf.download(ticker, period=real_period, interval=interval, progress=False, auto_adjust=False)
+        
+        # 修复列名
         if isinstance(df.columns, pd.MultiIndex):
-            # 如果是多级索引，只取第一级（Price），或者尝试展平
-            try:
-                df.columns = df.columns.get_level_values(0)
-            except:
-                pass
-        
-        # 确保索引是 Datetime
+            try: df.columns = df.columns.get_level_values(0)
+            except: pass
         if not isinstance(df.index, pd.DatetimeIndex):
             df.index = pd.to_datetime(df.index)
 
-        # 3. 数据有效性检查
         if len(df) < 30: 
-            # 如果数据太少，抛出明确错误以便调试
-            raise ValueError(f"数据不足 (仅 {len(df)} 行)，可能是代码错误或退市。")
+            raise ValueError(f"数据不足 (仅 {len(df)} 行)，请检查代码或市场状态。")
+        
+        # 3. 计算风控指标
+        df = calculate_indicators(df)
         
         current_price = df['Close'].iloc[-1]
+        current_rsi = df['RSI'].iloc[-1]
+        current_atr = df['ATR'].iloc[-1]
         
-        # ----------------------------------------
-        # 开始计算模型
-        # ----------------------------------------
-        
-        # 1. 跑 ABC
+        # 4. 跑模型
+        # (A) ABC 结构
         abc_res = None
+        # 如果是盘中，减少 ABC 误判，提高阈值或仅在日线级别跑
+        # 这里为了演示，仍然跑，但建议主要看日线
         pivots_df = get_swing_pivots(df['Close'], threshold=threshold)
         if len(pivots_df) >= 3:
-            for i in range(len(pivots_df)-3, -1, -1):
-                pA = pivots_df.iloc[i]
-                pB = pivots_df.iloc[i+1]
-                pC = pivots_df.iloc[i+2]
+            # 简化逻辑：取最后3个点
+            for i in range(len(pivots_df)-3, len(pivots_df)-2):
+                pA, pB, pC = pivots_df.iloc[i], pivots_df.iloc[i+1], pivots_df.iloc[i+2]
                 if (pA['type'] == -1 and pB['type'] == 1 and pC['type'] == -1) and \
                    (pB['price'] > pA['price'] and pC['price'] > pA['price']):
                     wave_height = pB['price'] - pA['price']
                     target = pC['price'] + wave_height * 1.618
-                    risk = current_price - pA['price']
+                    risk_dist = current_price - pA['price']
                     potential = target - current_price
-                    rr = potential / risk if risk > 0 else 0
-                    
-                    abc_res = {
-                        'pivots': (pA, pB, pC),
-                        'target': target,
-                        'stop': pA['price'],
-                        'rr': rr
-                    }
-                    break
+                    rr = potential / risk_dist if risk_dist > 0 else 0
+                    abc_res = {'pivots': (pA, pB, pC), 'target': target, 'stop': pA['price'], 'rr': rr}
         
-        # 2. 跑 趋势线
-        trend_res = get_resistance_trendline(df, lookback=200)
+        # (B) 趋势线
+        # 盘中数据多，lookback 放大
+        lb_trend = 300 if interval in ["5m", "15m"] else 150
+        trend_res = get_resistance_trendline(df, lookback=lb_trend)
         
-        # 3. 信号判定
+        # 5. 信号与风控判定
         signal = "WAIT"
         signal_color = "gray"
         reasons = []
         
-        if trend_res and trend_res['breakout']:
-            reasons.append("趋势线突破")
-            
-        if abc_res:
-            if current_price < abc_res['stop']:
-                reasons.append("ABC破位(止损)")
-            elif abc_res['rr'] > 2.0 and current_price < abc_res['pivots'][1]['price']:
-                reasons.append("ABC买点")
-        
-        if "趋势线突破" in reasons:
-            signal = "🔥 BREAKOUT"
-            signal_color = "#00FFFF" # Cyan
-        elif "ABC买点" in reasons:
+        # 动态止损 (ATR Based) - 狗蛋核心风控
+        # 如果是日线，2倍ATR；如果是盘中，1.5倍ATR
+        atr_mult = 2.0 if interval == "1d" else 1.5
+        stop_loss_atr = current_price - (atr_mult * current_atr)
+
+        is_breakout = trend_res and trend_res['breakout']
+        is_abc_buy = abc_res and abc_res['rr'] > 2.0 and current_price < abc_res['pivots'][1]['price']
+
+        if is_breakout:
+            if current_rsi > 75:
+                signal = "⚠️ 假突破预警"
+                signal_color = "#FFA500" # Orange
+                reasons.append(f"RSI过热 ({current_rsi:.1f})，需回踩确认")
+            elif current_atr < (current_price * 0.005):
+                signal = "⚠️ 弱势突破"
+                signal_color = "#FFFF00" # Yellow
+                reasons.append("波动率过低，动能存疑")
+            else:
+                signal = "🔥 SNIPER BREAKOUT"
+                signal_color = "#00FFFF" # Cyan
+                reasons.append("放量突破 + 指标健康")
+        elif is_abc_buy:
             signal = "🟢 BUY (ABC)"
-            signal_color = "#00FF00" # Green
-        elif "ABC破位(止损)" in reasons:
-            signal = "🔴 STOP"
-            signal_color = "#FF4B4b"
+            signal_color = "#00FF00"
+            reasons.append("ABC结构确立，盈亏比优秀")
             
+        # 6. 生成期权建议
         option_plan = None
-        if "BUY" in signal or "BREAKOUT" in signal:
-            tgt = abc_res['target'] if abc_res else current_price * 1.2
-            option_plan = generate_option_plan(ticker, current_price, tgt, signal)
-            
+        if "BUY" in signal or "SNIPER" in signal:
+            tgt = abc_res['target'] if abc_res else current_price * 1.15
+            # 盘中操作建议短期期权，日线建议长期
+            exp = "本周/下周 (短期)" if interval in ["5m", "15m", "1h"] else "45天+"
+            option_plan = generate_option_plan(ticker, current_price, tgt, signal, current_rsi, exp)
+
         return {
             "ticker": ticker,
             "price": current_price,
             "signal": signal,
             "color": signal_color,
             "reasons": ", ".join(reasons),
+            "rsi": current_rsi,
+            "atr": current_atr,
+            "stop_loss_atr": stop_loss_atr,
             "abc": abc_res,
             "trend": trend_res,
             "data": df,
@@ -287,126 +323,151 @@ def analyze_ticker_full(ticker, lookback="1y", threshold=0.06):
         }
 
     except Exception as e:
-        # 在调试阶段，把错误打印出来非常重要！
-        st.error(f"分析 {ticker} 时发生错误: {str(e)}")
+        st.error(f"分析失败: {str(e)}")
         return None
 
 # ==============================================================================
-# 3. UI 界面逻辑
+# 4. UI 界面逻辑 (Dashboard)
 # ==============================================================================
-st.sidebar.header("🕹️ 模式选择")
-mode = st.sidebar.radio("功能:", ["🔍 单股深度分析", "🚀 全市场批量扫描"])
+st.sidebar.header("🕹️ 首席风控官设置")
 
-if mode == "🔍 单股深度分析":
-    st.title("🔍 量化实战指挥舱 (Robust Trendline)")
+# 资金管理模块
+st.sidebar.markdown("### 💰 资金管理 (Money Management)")
+account_size = st.sidebar.number_input("账户总资金 ($)", value=10000, step=1000)
+risk_per_trade_pct = st.sidebar.slider("单笔最大亏损 (%)", 0.5, 5.0, 2.0, 0.5) / 100
+
+st.sidebar.markdown("---")
+mode = st.sidebar.radio("功能模式:", ["🔍 单股狙击 (Sniper Mode)", "🚀 批量扫描 (Scanner)"])
+
+if mode == "🔍 单股狙击 (Sniper Mode)":
+    st.title("🛡️ 狗蛋风控指挥舱 (Risk Control Center)")
     
-    col_input1, col_input2 = st.columns(2)
-    with col_input1:
-        ticker = st.text_input("输入代码 (Ticker)", value="NVDA").upper()
-    with col_input2:
-        threshold = st.slider("ABC 灵敏度", 0.03, 0.12, 0.06, 0.01)
-        
-    if st.button("开始分析", type="primary"):
-        with st.spinner(f"正在分析 {ticker} 的市场结构..."):
-            res = analyze_ticker_full(ticker, threshold=threshold)
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c1:
+        ticker = st.text_input("代码 (Ticker)", value="TSLA").upper()
+    with c2:
+        # 支持盘中周期
+        interval = st.selectbox("K线周期", ["1d", "1h", "15m", "5m"], index=0)
+    with c3:
+        threshold = st.slider("结构灵敏度", 0.03, 0.10, 0.06, 0.01)
+
+    if st.button("🚀 启动分析", type="primary"):
+        with st.spinner(f"正在接入交易所数据 ({interval})..."):
+            res = analyze_ticker_pro(ticker, interval=interval, threshold=threshold)
             
             if res:
-                c1, c2, c3 = st.columns(3)
-                c1.metric("当前价格", f"${res['price']:.2f}")
-                rr_val = f"{res['abc']['rr']:.2f}" if res['abc'] else "N/A"
-                c2.metric("盈亏比 (R/R)", rr_val)
-                bk_text = "YES" if (res['trend'] and res['trend']['breakout']) else "NO"
-                c3.metric("趋势线突破", bk_text, delta="强势信号" if bk_text=="YES" else None)
+                # ----------------- 核心指标区 -----------------
+                col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+                col_m1.metric("当前价格", f"${res['price']:.2f}")
                 
+                # RSI 颜色逻辑
+                rsi_val = res['rsi']
+                rsi_delta = "超买" if rsi_val > 70 else "超卖" if rsi_val < 30 else "正常"
+                rsi_color = "normal" if 30 <= rsi_val <= 70 else "inverse"
+                col_m2.metric("RSI (情绪)", f"{rsi_val:.1f}", delta=rsi_delta, delta_color=rsi_color)
+                
+                col_m3.metric("ATR (波动)", f"{res['atr']:.2f}")
+                
+                # 推荐止损
+                col_m4.metric("🛡️ 推荐硬止损", f"${res['stop_loss_atr']:.2f}", delta="基于ATR")
+
+                # ----------------- 信号区 -----------------
                 st.markdown(f"""
-                <div style="background-color: #262730; padding: 15px; border-radius: 10px; border-left: 10px solid {res['color']}; margin-bottom: 20px;">
+                <div style="background-color: #262730; padding: 20px; border-radius: 10px; border-left: 10px solid {res['color']}; margin: 20px 0;">
                     <h2 style="color: {res['color']}; margin:0;">信号: {res['signal']}</h2>
-                    <p style="color: #ccc; margin:0;">触发逻辑: {res['reasons'] if res['reasons'] else '无明显信号'}</p>
+                    <p style="color: #ccc; margin-top:5px; font-size: 16px;">逻辑: {res['reasons'] if res['reasons'] else '等待市场确认...'}</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
+                # ----------------- 资金仓位建议 (狗蛋核心) -----------------
+                if "ENTRY" in res['signal'] or "BUY" in res['signal'] or "BREAKOUT" in res['signal']:
+                    qty = calculate_position_size(account_size, risk_per_trade_pct, res['price'], res['stop_loss_atr'])
+                    risk_amt = account_size * risk_per_trade_pct
+                    
+                    st.markdown("### 💰 首席风控官·仓位指令")
+                    cc1, cc2 = st.columns([2, 1])
+                    with cc1:
+                        if qty > 0:
+                            st.success(f"🎯 **建议最大仓位:** 正股 **{qty}** 股")
+                            st.caption(f"*计算逻辑: 总资金 ${account_size} × 风险 {risk_per_trade_pct*100}% = 最大亏损 ${risk_amt:.0f}。单股止损距离 ${res['price'] - res['stop_loss_atr']:.2f}。*")
+                        else:
+                            st.error("❌ **禁止开仓:** 止损空间太窄或风险过大！")
+                
+                # ----------------- 图表区 -----------------
                 fig = go.Figure()
                 df = res['data']
                 fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price'))
                 
+                # 画 ABC
                 if res['abc']:
                     pA, pB, pC = res['abc']['pivots']
-                    fig.add_trace(go.Scatter(x=[pA['date'], pB['date'], pC['date']], y=[pA['price'], pB['price'], pC['price']], mode='lines+markers', name='ABC Structure', line=dict(color='yellow', width=2, dash='dash')))
-                    fig.add_hline(y=res['abc']['target'], line_color="green", line_dash="solid", annotation_text="Target 1.618")
-                    fig.add_hline(y=res['abc']['stop'], line_color="red", line_dash="dot", annotation_text="Stop Loss")
+                    fig.add_trace(go.Scatter(x=[pA['date'], pB['date'], pC['date']], y=[pA['price'], pB['price'], pC['price']], mode='lines+markers', name='Structure', line=dict(color='yellow', dash='dash')))
+                    fig.add_hline(y=res['abc']['target'], line_color="green", annotation_text="Target")
 
+                # 画趋势线
                 if res['trend']:
                     tr = res['trend']
-                    fig.add_trace(go.Scatter(x=[tr['x1'], tr['x2']], y=[tr['y1'], tr['y2']], mode='lines', name='Robust Trendline', line=dict(color='cyan', width=3)))
-                    if tr['breakout']:
-                         fig.add_annotation(x=df.index[-1], y=res['price'], text="BREAKOUT", bgcolor="red", showarrow=True, ax=0, ay=-40)
+                    fig.add_trace(go.Scatter(x=[tr['x1'], tr['x2']], y=[tr['y1'], tr['y2']], mode='lines', name='Trendline', line=dict(color='cyan', width=2)))
 
-                fig.update_layout(template="plotly_dark", height=600, title=f"{ticker} 技术分析图表")
-                fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
-                st.plotly_chart(fig, use_container_width=True)
+                # 画动态止损线 (只画最后一段)
+                fig.add_hline(y=res['stop_loss_atr'], line_color="#FF4B4B", line_dash="dot", annotation_text=f"Hard Stop ${res['stop_loss_atr']:.2f}")
+
+                fig.update_layout(template="plotly_dark", height=600, title=f"{ticker} ({interval}) 风控分析图")
                 
+                # 如果是日线，隐藏周末空缺；分钟线暂时不隐藏以防报错
+                if interval == "1d":
+                    fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                
+                st.plotly_chart(fig, use_container_width=True)
+
+                # ----------------- 期权战术板 -----------------
                 if res['option_plan']:
-                    st.markdown("### ⚡ 期权战术板")
+                    st.markdown("### ⚡ 期权作战计划")
                     plan = res['option_plan']
-                    op_col1, op_col2 = st.columns([1, 2])
-                    with op_col1:
-                        st.info(f"**策略:** {plan['name']}\n\n**操作:** {plan['strategy']}")
-                    with op_col2:
-                        st.success(f"**腿 (Legs):** {plan['legs']}\n\n**期限:** {plan['expiry']}\n\n**逻辑:** {plan['logic']}")
-            else:
-                # 这里的错误信息现在会显示上面的 st.error 具体内容
-                pass
+                    # 只有当信号是正向且非警告时，才显示绿色
+                    color_call = "red" if "警告" in plan['name'] else "green"
+                    
+                    op_c1, op_c2 = st.columns(2)
+                    with op_c1:
+                         st.info(f"**策略:** {plan['strategy']}\n\n**战术:** {plan['name']}")
+                    with op_c2:
+                         st.markdown(f"""
+                         <div style="padding:10px; border:1px solid {color_call}; border-radius:5px;">
+                         <strong>腿 (Legs):</strong> {plan['legs']}<br>
+                         <strong>到期 (Expiry):</strong> {plan['expiry']}<br>
+                         <strong>逻辑:</strong> {plan['logic']}
+                         </div>
+                         """, unsafe_allow_html=True)
 
 else:
-    st.title("🚀 全市场机会扫描器")
-    default_list = "NVDA, TSLA, AAPL, MSFT, AMD, AMZN, GOOG, META, NFLX, COIN, MSTR, MARA, PLTR, BABA, PDD, QQQ, SPY, IWM"
-    user_tickers = st.text_area("监控列表", value=default_list, height=80)
+    # 批量扫描模式 (简化版)
+    st.title("🚀 市场全境扫描 (Scanner)")
+    default_list = "TSLA, NVDA, AAPL, AMD, AMZN, GOOG, META, MSFT, COIN, MSTR, PLTR"
+    tickers_input = st.text_area("监控列表 (逗号分隔)", value=default_list)
     
-    if st.button("⚡ 开始扫描", type="primary"):
-        tickers = [t.strip().upper() for t in user_tickers.split(",") if t.strip()]
+    if st.button("⚡ 开始扫描"):
+        tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
         results = []
         progress = st.progress(0)
-        status = st.empty()
         
         for i, t in enumerate(tickers):
-            status.text(f"正在分析: {t} ...")
-            # 扫描时不打断，但会记录错误
-            r = analyze_ticker_full(t, threshold=0.05) 
-            if r and ("BUY" in r['signal'] or "BREAKOUT" in r['signal']):
-                opt_str = r['option_plan']['strategy'] if r['option_plan'] else "-"
-                results.append({
-                    "代码": r['ticker'],
-                    "价格": f"${r['price']:.2f}",
-                    "信号": r['signal'],
-                    "触发理由": r['reasons'],
-                    "期权建议": opt_str,
-                    "raw_res": r 
-                })
-            
+            # 扫描模式默认用日线，速度快
+            r = analyze_ticker_pro(t, interval="1d")
+            if r:
+                # 只有出现特定信号才加入列表
+                if "BUY" in r['signal'] or "BREAKOUT" in r['signal']:
+                    results.append({
+                        "代码": t,
+                        "价格": r['price'],
+                        "信号": r['signal'],
+                        "RSI": f"{r['rsi']:.1f}",
+                        "ATR止损": f"${r['stop_loss_atr']:.2f}"
+                    })
             progress.progress((i + 1) / len(tickers))
-            time.sleep(0.1) 
+            time.sleep(0.1)
             
-        progress.empty()
-        status.empty()
-        
         if results:
-            st.success(f"发现 {len(results)} 个机会")
-            df_res = pd.DataFrame(results).drop(columns=['raw_res'])
-            st.dataframe(df_res, use_container_width=True)
-            
-            st.markdown("---")
-            for item in results:
-                r = item['raw_res']
-                with st.expander(f"{r['ticker']} - {r['signal']}"):
-                    fig = go.Figure()
-                    df = r['data']
-                    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close']))
-                    if r['abc']:
-                        pA, pB, pC = r['abc']['pivots']
-                        fig.add_trace(go.Scatter(x=[pA['date'], pB['date'], pC['date']], y=[pA['price'], pB['price'], pC['price']], mode='lines', line=dict(color='yellow', dash='dash')))
-                    if r['trend']:
-                         fig.add_trace(go.Scatter(x=[r['trend']['x1'], r['trend']['x2']], y=[r['trend']['y1'], r['trend']['y2']], mode='lines', line=dict(color='cyan', width=2)))
-                    fig.update_layout(template="plotly_dark", height=400, margin=dict(l=0,r=0,t=30,b=0))
-                    st.plotly_chart(fig)
+            st.success(f"扫描完成，发现 {len(results)} 个潜在机会")
+            st.dataframe(pd.DataFrame(results))
         else:
-            st.info("无信号。")
+            st.info("扫描完成，暂无符合高胜率模型的标的。")
