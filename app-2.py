@@ -5,6 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 import time
 from datetime import datetime, timedelta
+from scipy.signal import argrelextrema
 
 # ==============================================================================
 # 1. 页面配置与样式
@@ -25,47 +26,131 @@ st.markdown("""
 # ==============================================================================
 
 # --- A. 寻找波段高低点 (ZigZag) ---
-def get_swing_pivots(series, threshold=0.06):
-    pivots = []
-    last_pivot_price = series.iloc[0]
-    last_pivot_date = series.index[0]
-    last_pivot_type = 0 
-    temp_extreme_price = series.iloc[0]
-    temp_extreme_date = series.index[0]
+# -----------------------------------------------------------------------------
+# 3. 核心算法 B: 强力多点拟合下降趋势线 (Robust Multi-Touch Trendline)
+# -----------------------------------------------------------------------------
+from scipy.signal import argrelextrema
+
+def get_resistance_trendline(df, lookback=150):
+    # 1. 提取高点数据
+    highs = df['High'].values
+    if len(highs) < 30: return None
     
-    for date, price in series.items():
-        if last_pivot_type == 0:
-            if price > last_pivot_price * (1 + threshold):
-                last_pivot_type = -1
-                pivots.append({'date': last_pivot_date, 'price': last_pivot_price, 'type': -1})
-                temp_extreme_price = price
-                temp_extreme_date = date
-            elif price < last_pivot_price * (1 - threshold):
-                last_pivot_type = 1
-                pivots.append({'date': last_pivot_date, 'price': last_pivot_price, 'type': 1})
-                temp_extreme_price = price
-                temp_extreme_date = date     
-        elif last_pivot_type == -1: 
-            if price > temp_extreme_price:
-                temp_extreme_price = price
-                temp_extreme_date = date
-            elif price < temp_extreme_price * (1 - threshold):
-                pivots.append({'date': temp_extreme_date, 'price': temp_extreme_price, 'type': 1})
-                last_pivot_type = 1
-                last_pivot_price = temp_extreme_price
-                temp_extreme_price = price
-                temp_extreme_date = date
-        elif last_pivot_type == 1:
-            if price < temp_extreme_price:
-                temp_extreme_price = price
-                temp_extreme_date = date
-            elif price > temp_extreme_price * (1 + threshold):
-                pivots.append({'date': temp_extreme_date, 'price': temp_extreme_price, 'type': -1})
-                last_pivot_type = -1
-                last_pivot_price = temp_extreme_price
-                temp_extreme_price = price
-                temp_extreme_date = date
-    return pd.DataFrame(pivots)
+    # 截取最近 lookback 天的数据，减少计算量
+    if len(highs) > lookback:
+        start_idx = len(highs) - lookback
+        subset_highs = highs[start_idx:]
+        global_offset = start_idx
+    else:
+        subset_highs = highs
+        global_offset = 0
+
+    # 2. 识别所有的局部波峰 (Peaks)
+    # order=5 表示这个点必须比前后5天都高，才能算一个波峰
+    # 这能过滤掉很多杂乱的小K线，只保留显著高点
+    peak_indexes = argrelextrema(subset_highs, np.greater, order=3)[0]
+    
+    # 如果波峰太少，没法画线，直接取最高点
+    if len(peak_indexes) < 2: 
+        return None
+
+    # 3. 寻找最佳趋势线 (打分机制)
+    best_line = None
+    max_score = -float('inf')
+    
+    # 策略：即使不是最高点，也可能是趋势线的起点（有时候最高点是假突破）
+    # 我们遍历前3个最高峰作为潜在起点 A
+    # 按价格排序，取前3高的波峰索引
+    sorted_peaks = sorted(peak_indexes, key=lambda i: subset_highs[i], reverse=True)
+    potential_start_points = sorted_peaks[:3] 
+
+    for idx_A in potential_start_points:
+        price_A = subset_highs[idx_A]
+        
+        # 遍历该点之后的所有波峰作为 B
+        for idx_B in peak_indexes:
+            if idx_B <= idx_A: continue # B 必须在 A 后面
+            
+            price_B = subset_highs[idx_B]
+            if price_B >= price_A: continue # 必须是下降趋势
+            
+            # 计算斜率和截距
+            slope = (price_B - price_A) / (idx_B - idx_A)
+            intercept = price_A - slope * idx_A
+            
+            # --- 开始打分 ---
+            hits = 0       # 触碰次数 (加分)
+            violations = 0 # 严重突破次数 (扣分)
+            
+            # 检查 A 和 B 之间的所有波峰 (验证中间拟合度)
+            # 我们只检查波峰，不检查每一根K线，因为我们允许中间的小杂波
+            for k in peak_indexes:
+                if k <= idx_A: continue
+                
+                # 理论上的趋势线价格
+                trend_price = slope * k + intercept
+                actual_price = subset_highs[k]
+                
+                # 误差容忍度 (Tolerance): 价格的 1%
+                tolerance = actual_price * 0.01 
+                
+                if abs(actual_price - trend_price) < tolerance:
+                    # 价格刚好在线附近 -> 这是一个有效的触点
+                    hits += 1
+                elif actual_price > trend_price + tolerance:
+                    # 价格明显高于线 -> 这是一个突破（压不住）
+                    violations += 1
+            
+            # 评分公式：
+            # 触碰点越多越好，突破点越少越好
+            # 稍微惩罚 violations (权重加大，保证阻力有效性)
+            score = hits - (violations * 2)
+            
+            # 额外加分：斜率不能太陡峭，太陡峭的通常不是长期趋势
+            # 这是一个微调，防止连接两个相邻的暴跌点
+            if abs(slope) < (price_A * 0.05): # 假设
+                score += 0.5
+
+            if score > max_score:
+                max_score = score
+                best_line = {
+                    'slope': slope,
+                    'intercept': intercept,
+                    'start_idx_rel': idx_A,
+                    'end_idx_rel': idx_B
+                }
+
+    # 4. 构建返回结果
+    if best_line:
+        # 映射回全局索引
+        slope = best_line['slope']
+        
+        # 重新计算全局截距: y = mx + c  => c = y - mx
+        # 我们用起点 A 来校准
+        idx_A_glob = global_offset + best_line['start_idx_rel']
+        price_A = subset_highs[best_line['start_idx_rel']]
+        global_intercept = price_A - slope * idx_A_glob
+        
+        # 计算线在终点的位置（画图用）
+        # 为了美观，我们把线延长到今天
+        last_idx = len(df) - 1
+        trendline_price_now = slope * last_idx + global_intercept
+        
+        # 还要算起点的坐标
+        trendline_price_start = slope * idx_A_glob + global_intercept
+
+        current_close = df['Close'].iloc[-1]
+        
+        return {
+            'x1': df.index[idx_A_glob], 
+            'y1': trendline_price_start,
+            'x2': df.index[last_idx], # 直接画到今天
+            'y2': trendline_price_now,
+            'price_now': trendline_price_now,
+            'breakout': current_close > trendline_price_now
+        }
+    
+    return None
 
 # --- B. 自动下降趋势线 (Resistance Trendline) ---
 def get_resistance_trendline(df, lookback=150):
@@ -121,6 +206,8 @@ def get_resistance_trendline(df, lookback=150):
             'breakout': current_close > trendline_price_now
         }
     return None
+
+
 
 # --- C. 期权策略生成器 ---
 def generate_option_plan(ticker, current_price, target_price, signal_type):
