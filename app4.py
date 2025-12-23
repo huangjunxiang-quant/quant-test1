@@ -398,4 +398,153 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06):
             signal_color = "#00FFFF"
             reasons.append("突破长期下降阻力")
             
-        if abc_res and current_price > abc_res['p
+        if abc_res and current_price > abc_res['pivots'][2]['price']:
+            if "突破" in signal: signal = "🚀 双重共振买点"
+            else: 
+                signal = "🟢 ABC 结构确立"
+                signal_color = "#00FF00"
+            reasons.append("回踩C点确认")
+
+        # 看空信号 (优先级：高于无信号，低于双重共振)
+        is_breakdown = trend_sup and trend_sup['breakdown']
+        if is_breakdown:
+            if "双重" not in signal:
+                signal = "📉 趋势线跌破"
+                signal_color = "#FF00FF"
+                reasons.append("跌破长期上升支撑")
+
+        # 止损位计算
+        if "跌破" in signal:
+            stop_loss_level = current_price + (2.0 * current_atr) # 做空止损在上方
+        else:
+            stop_loss_level = current_price - (2.0 * current_atr) # 做多止损在下方
+        
+        option_plan = None
+        if "突破" in signal or "ABC" in signal or "跌破" in signal:
+            option_plan = generate_option_plan(ticker, current_price, signal, current_rsi)
+
+        return {
+            "ticker": ticker,
+            "price": current_price,
+            "signal": signal,
+            "color": signal_color,
+            "reasons": ", ".join(reasons),
+            "rsi": current_rsi,
+            "atr": current_atr,
+            "stop_loss_atr": stop_loss_level,
+            "trend_res": trend_res,
+            "trend_sup": trend_sup, # 返回支撑线
+            "abc": abc_res,
+            "data": df,
+            "option_plan": option_plan
+        }
+
+    except Exception:
+        return None
+
+# ==============================================================================
+# 5. UI 主程序
+# ==============================================================================
+st.sidebar.header("🕹️ 首席风控官设置")
+
+account_size = st.sidebar.number_input("账户总资金 ($)", value=10000, step=1000)
+risk_per_trade_pct = st.sidebar.slider("单笔风险 (%)", 0.5, 5.0, 2.0, 0.5) / 100
+
+st.sidebar.markdown("---")
+mode = st.sidebar.radio("作战模式:", ["🔍 单股狙击 (Live)", "🚀 市场全境扫描 (Hot 50)"])
+
+HOT_STOCKS = ["TSLA", "NVDA", "PLTR", "MSTR", "COIN", "AMD", "META", "AMZN", "GOOG", "MSFT", "AAPL", "MARA", "RIOT", "CLSK", "NFLX"]
+
+if mode == "🔍 单股狙击 (Live)":
+    st.title("🛡️ 狗蛋风控指挥舱 (Bi-Directional Fixed)")
+    
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c1: ticker = st.text_input("代码", value="TSLA").upper()
+    with c2: lookback = st.selectbox("回溯", ["2y", "5y", "10y"], index=1)
+    with c3: threshold_days = st.slider("灵敏度", 0.03, 0.15, 0.08, 0.01)
+
+    with st.spinner(f"正在全方位分析 {ticker}..."):
+        res = analyze_ticker_pro(ticker, interval="1d", lookback=lookback, threshold=threshold_days)
+        
+        if res:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("当前价格", f"${res['price']:.2f}", delta=f"{res['signal']}")
+            m2.metric("ATR 波动", f"{res['atr']:.2f}")
+            m3.metric("RSI 情绪", f"{res['rsi']:.1f}")
+
+            st.markdown(f"""
+            <div style="background-color: #262730; padding: 15px; border-radius: 10px; border-left: 10px solid {res['color']}; margin-bottom: 20px;">
+                <h3 style="color: {res['color']}; margin:0;">{res['signal']}</h3>
+                <p style="color: #ccc; margin:0;">逻辑: {res['reasons']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # 只有出现信号时才建议仓位
+            if "WAIT" not in res['signal']:
+                qty = calculate_position_size(account_size, risk_per_trade_pct, res['price'], res['stop_loss_atr'])
+                direction = "做空/卖出" if "跌破" in res['signal'] else "买入"
+                st.success(f"🎯 **交易指令:** 建议 {direction} **{qty}** 股 (止损: ${res['stop_loss_atr']:.2f})")
+
+            # 绘图
+            fig = plot_chart(res['data'], res, height=600)
+            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': True})
+
+            # 关键点位表
+            if res['abc']:
+                pA, pB, pC = res['abc']['pivots']
+                height_AB = pB['price'] - pA['price']
+                levels_data = []
+                levels_data.append({"Level": "⛔ Stop Loss (A)", "Price": pA['price']})
+                levels_data.append({"Level": "🔵 Entry (C)", "Price": pC['price']})
+                for r in [0.618, 1.0, 1.272, 1.618, 2.0]:
+                    levels_data.append({"Level": f"Fib {r}", "Price": pC['price'] + height_AB * r})
+                st.dataframe(pd.DataFrame(levels_data).style.format({"Price": "${:.2f}"}), use_container_width=True)
+
+            if res['option_plan']:
+                with st.expander("⚡ 查看期权建议", expanded=True):
+                    p = res['option_plan']
+                    st.info(f"**{p['name']}**: {p['legs']} | {p['logic']}")
+        else:
+            st.error("数据获取失败。")
+
+else:
+    st.title("🚀 市场全境扫描 (Hot 50)")
+    tickers_input = st.text_area("监控列表", value=", ".join(HOT_STOCKS), height=100)
+    
+    if st.button("⚡ 开始扫描"):
+        tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+        progress_bar = st.progress(0)
+        results = []
+        
+        def scan_one(t):
+            # 扫描模式使用 5年 默认回溯
+            return analyze_ticker_pro(t, interval="1d", lookback="5y", threshold=0.08)
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(scan_one, t): t for t in tickers}
+            for i, future in enumerate(futures):
+                r = future.result()
+                # 扫描条件：多头信号 或 空头信号
+                if r and ("ABC" in r['signal'] or "突破" in r['signal'] or "跌破" in r['signal']):
+                    results.append(r)
+                progress_bar.progress((i + 1) / len(tickers))
+        
+        progress_bar.empty()
+        
+        if results:
+            st.success(f"发现 {len(results)} 个机会")
+            for i, r in enumerate(results):
+                with st.expander(f"{r['ticker']} | ${r['price']:.2f} | {r['signal']}", expanded=False):
+                    st.write(f"逻辑: {r['reasons']}")
+                    if "跌破" in r['signal']: st.warning("📉 注意：这是做空信号！")
+                    
+                    if r['abc']:
+                        pA, pB, pC = r['abc']['pivots']
+                        h = pB['price'] - pA['price']
+                        t1 = pC['price'] + h * 1.618
+                        st.code(f"A(止损): ${pA['price']:.2f} | C(支撑): ${pC['price']:.2f} | 目标1.618: ${t1:.2f}")
+                    
+                    fig = plot_chart(r['data'], r, height=400)
+                    st.plotly_chart(fig, use_container_width=True, key=f"chart_{i}", config={'scrollZoom': True})
+        else:
+            st.warning("暂无信号")
