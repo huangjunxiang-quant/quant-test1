@@ -4,4 +4,4 @@ pandas
 numpy
 plotly
 scipy
-requests
+google-genai
