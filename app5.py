@@ -6,90 +6,94 @@ import plotly.graph_objects as go
 from scipy.signal import argrelextrema
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # ==============================================================================
-# 1. 页面配置
+# 1. 页面配置 (必须放在第一行)
 # ==============================================================================
-st.set_page_config(page_title="Quant Sniper Pro", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Quant Sniper Pro (New SDK)", layout="wide", page_icon="⚡")
 
 st.markdown("""
 <style>
     .metric-card { background-color: #1e1e1e; border: 1px solid #333; padding: 15px; border-radius: 8px; text-align: center; }
     .stToast { background-color: #333; color: white; }
     [data-testid="stSidebar"] { background-color: #111; }
+    [data-testid="stDataFrame"] { width: 100%; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. Google Gemini API 配置 (官方标准库)
+# 2. 核心配置：Google Gen AI (最新官方 SDK)
 # ==============================================================================
 # 🔴 你的 API Key
-GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI"
+GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI" 
 
-# 尝试初始化模型
-ai_model = None
+# 初始化客户端 (新版 SDK 写法)
+ai_client = None
 try:
-    genai.configure(api_key=GOOGLE_API_KEY)
-    # 使用 gemini-pro，它是目前兼容性最好的官方模型
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+    ai_client = genai.Client(api_key=GOOGLE_API_KEY)
 except Exception as e:
-    st.error(f"AI 初始化失败: {e}")
+    st.error(f"AI 客户端初始化失败: {e}")
 
-# 🐶 狗蛋的人设提示词
-SYSTEM_PROMPT = """
+# 🐶 狗蛋的灵魂设定
+SYS_INSTRUCT = """
 你叫“狗蛋”，代号 **Pro 3**，是用户的**首席风控官**。
 用户的目标是在一个月内将账户从 $4,000 复利做到 $20,000。
 
-**你的性格设定**：
-1. **冷酷且犀利**：不要说废话，不要模棱两可。
-2. **军事化风格**：使用“狙击”、“防守”、“撤退”、“弹药”、“阵地”等术语。
-3. **风控狂魔**：你最恨亏损，如果趋势不对，直接骂醒用户让他跑。
-4. **幽默感**：适当用点黑色幽默，比如“这时候买入就是送钱”。
+**你的性格**：
+1. **冷酷犀利**：不要说废话。
+2. **军事风格**：使用“狙击”、“防守”、“撤退”等术语。
+3. **风控狂魔**：趋势不对直接骂醒用户。
 
-**你的分析逻辑**：
-1. **结合数据**：用户会给你 RSI、ATR、均线趋势。RSI>70 是过热，EMA8 < EMA21 是空头。
-2. **结合新闻**：如果新闻是重大利好，可以适当激进；如果是利空，坚决看空。
-
-**输出格式（必须严格遵守 markdown）**：
+**输出格式 (Markdown)**：
 ### 🛡️ 狗蛋 Pro 3 战地报告
-- **🎯 核心判决**：【做多 / 做空 / 立即空仓逃命 / 锁死利润】（选一个，加粗）
-- **📊 战局解读**：(用一句话结合技术面和新闻，犀利点评现状)
-- **⚔️ 详细指令**：
-  - **进场位**：$XXX (或 现价突击)
-  - **止损红线**：$XXX (基于 ATR 计算，必须给具体数字)
-  - **止盈目标**：$XXX
-- **⚠️ 狗蛋警告**：(一句醒脑的话)
+- **🎯 核心判决**：【做多 / 做空 / 空仓逃命 / 锁死利润】(加粗)
+- **📊 战局解读**：(一句话点评技术面+新闻)
+- **⚔️ 操作指令**：
+  - **进场**：$XXX
+  - **止损**：$XXX
+  - **止盈**：$XXX
+- **⚠️ 警告**：(醒脑金句)
 """
 
 def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
-    """ 调用官方 SDK 生成建议 """
-    if not ai_model:
-        return "❌ AI 未连接：请检查 requirements.txt 是否包含 google-generativeai>=0.8.3"
-    
-    # 构造完整的对话内容
-    user_message = f"""
+    """ 【狗蛋 Pro 3 分析引擎 - New SDK 版】 """
+    if not ai_client:
+        return "❌ 错误：请确保 requirements.txt 已安装 google-genai"
+
+    # 用户的实时战况
+    user_content = f"""
     【战地实时数据】
     - 标的：{ticker}
     - 现价：${price:.2f}
-    - 趋势状态：{trend}
-    - RSI (14)：{rsi:.2f}
-    - ATR (波动率)：{atr:.2f}
+    - 趋势：{trend}
+    - RSI：{rsi:.2f}
+    - ATR：{atr:.2f}
     
-    【最新情报】
+    【情报】
     {news_summary}
-    """
     
+    下达指令！
+    """
+
     try:
-        # gemini-pro 不支持在构造函数里传 system_instruction，所以直接拼在前面
-        full_input = SYSTEM_PROMPT + "\n\n" + user_message
-        response = ai_model.generate_content(full_input)
+        # 🔴 新版 SDK 调用方式
+        response = ai_client.models.generate_content(
+            model="gemini-1.5-flash", # 使用最新且快速的模型
+            contents=user_content,
+            config=types.GenerateContentConfig(
+                system_instruction=SYS_INSTRUCT,
+                temperature=0.7,
+                max_output_tokens=1024
+            )
+        )
         return response.text
     except Exception as e:
-        return f"❌ 狗蛋大脑过载: {str(e)}"
+        return f"❌ 狗蛋大脑连接失败：{str(e)}"
 
 # ==============================================================================
-# 3. 核心数学算法
+# 3. 核心数学算法 (保持不变)
 # ==============================================================================
 
 def get_swing_pivots_high_low(df, threshold=0.06):
@@ -97,7 +101,6 @@ def get_swing_pivots_high_low(df, threshold=0.06):
     last_pivot_price = df['Close'].iloc[0]; last_pivot_date = df.index[0]; last_pivot_type = 0 
     temp_high_price = df['High'].iloc[0]; temp_high_date = df.index[0]
     temp_low_price = df['Low'].iloc[0]; temp_low_date = df.index[0]
-    
     for date, row in df.iterrows():
         high = row['High']; low = row['Low']
         if last_pivot_type == 0:
@@ -124,11 +127,9 @@ def get_multiple_resistance_lines(df, lookback=1000, order=5, max_lines=5):
     global_offset = start_idx
     peak_indexes = argrelextrema(subset_highs, np.greater, order=order)[0]
     if len(peak_indexes) < 2: return []
-
     candidates = []
     sorted_peaks = sorted(peak_indexes, key=lambda i: subset_highs[i], reverse=True)
     potential_start_points = sorted_peaks[:8] 
-
     for idx_A in potential_start_points:
         price_A = subset_highs[idx_A]
         for idx_B in peak_indexes:
@@ -136,8 +137,7 @@ def get_multiple_resistance_lines(df, lookback=1000, order=5, max_lines=5):
             price_B = subset_highs[idx_B]
             if price_B >= price_A: continue 
             slope = (price_B - price_A) / (idx_B - idx_A)
-            intercept = price_A - slope * idx_A
-            hits = 0; violations = 0 
+            hits = 0; violations = 0; intercept = price_A - slope * idx_A 
             for k in peak_indexes:
                 if k <= idx_A: continue
                 trend_price = slope * k + intercept
@@ -152,7 +152,6 @@ def get_multiple_resistance_lines(df, lookback=1000, order=5, max_lines=5):
                 intercept_glob = price_A - slope * idx_A_glob
                 price_now = slope * last_idx + intercept_glob
                 candidates.append({'x1': df.index[idx_A_glob], 'y1': price_A, 'x2': df.index[last_idx], 'y2': price_now, 'price_now': price_now, 'score': score, 'breakout': df['Close'].iloc[-1] > price_now})
-
     candidates.sort(key=lambda x: x['score'], reverse=True)
     final_lines = []
     for line in candidates:
@@ -319,7 +318,7 @@ mode = st.sidebar.radio("作战模式:", ["🔍 单股狙击 (Live)", "🚀 市�
 HOT_STOCKS_LIST = ["TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NFLX", "AMD", "AVGO", "MSTR", "COIN", "MARA", "CLSK", "UPST", "AFRM", "SOFI", "GME", "AMC", "TQQQ", "SOXL"]
 
 if mode == "🔍 单股狙击 (Live)":
-    st.title("🛡️ 狗蛋风控指挥舱")
+    st.title("🛡️ 狗蛋风控指挥舱 (New SDK)")
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1: ticker = st.text_input("代码", value="TSLA").upper()
     with c2: lookback = st.selectbox("回溯", ["2y", "5y", "10y"], index=1)
@@ -342,43 +341,4 @@ if mode == "🔍 单股狙击 (Live)":
         if "WAIT" not in res['signal']:
             qty = calculate_position_size(account_size, risk_per_trade_pct, res['price'], res['stop_loss_atr'])
             direction = "做空" if "跌破" in res['signal'] else "买入"
-            st.success(f"🎯 **交易指令:** 建议 {direction} **{qty}** 股 (止损: ${res['stop_loss_atr']:.2f})")
-
-        fig = plot_chart(res['data'], res, height=600)
-        st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': True})
-
-        if res['abc']:
-            pA, pB, pC = res['abc']['pivots']
-            levels_data = [{"Level": "⛔ Stop Loss (A)", "Price": pA['price']}, {"Level": "🔵 Entry (C)", "Price": pC['price']}]
-            height_AB = pB['price'] - pA['price']
-            for r in [0.618, 1.0, 1.272, 1.618, 2.0]: levels_data.append({"Level": f"Fib {r}", "Price": pC['price'] + height_AB * r})
-            st.dataframe(pd.DataFrame(levels_data).style.format({"Price": "${:.2f}"}), use_container_width=True)
-
-        st.write("---")
-        st.subheader("🧠 召唤 Pro 3 战术指导")
-        if st.button("⚡ 请求 Pro 3 分析", key="btn_ask_ai"):
-            with st.spinner("🐶 狗蛋正在连接总部..."):
-                news_text = "暂无实时新闻"
-                curr_trend = "多头" if res['ema_bullish'] else "空头"
-                report = ask_goudan_pro3(res['ticker'], res['price'], curr_trend, res['rsi'], res['atr'], news_text)
-                st.markdown(f"<div style='background-color:#1E1E1E;border:1px solid #4285F4;padding:20px;border-radius:10px'>{report}</div>", unsafe_allow_html=True)
-
-else:
-    st.title("🚀 市场全境扫描")
-    if st.button("⚡ 开始扫描"):
-        tickers = HOT_STOCKS_LIST; progress = st.progress(0); results = []
-        def scan_one(t): return analyze_ticker_pro(t, interval="1d", lookback="5y", threshold=0.08, trend_order=trend_order)
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {executor.submit(scan_one, t): t for t in tickers}
-            for i, f in enumerate(futures):
-                r = f.result()
-                if r and "WAIT" not in r['signal']: results.append(r)
-                progress.progress((i+1)/len(tickers))
-        progress.empty()
-        if results:
-            st.success(f"发现 {len(results)} 个机会")
-            for i, r in enumerate(results):
-                with st.expander(f"{r['ticker']} | {r['signal']}", expanded=False):
-                    st.write(r['reasons'])
-                    st.plotly_chart(plot_chart(r['data'], r, height=400), key=f"chart_{i}")
-        else: st.warning("无信号")
+            st.success(f"🎯 **交易指令:** 建议 {direction} **{qty}** 股 (止损
