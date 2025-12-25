@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from scipy.signal import argrelextrema
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from google.genai import types
+from google.google-generativeai import types
 import google.generativeai as genai
 
 # ==============================================================================
