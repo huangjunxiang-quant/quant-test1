@@ -59,7 +59,6 @@ except Exception as e:
 # 🐶 狗蛋 Pro 3 的人设 (无需变动)
 SYS_INSTRUCT = """
 你叫“狗蛋”，代号 **Pro 3**，是用户的**首席风控官**。
-用户的目标是在一个月内将账户从 $4,000 复利做到 $20,000。
 
 **你的性格**：
 1. **冷酷犀利**：不要说废话。
@@ -99,7 +98,7 @@ def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
     try:
         # 🟢 新版 SDK 调用方式
         response = client.models.generate_content(
-            model="gemini-1.5-flash", 
+            model="gemini-2.5-flash", 
             contents=user_content,
             config=types.GenerateContentConfig(
                 system_instruction=SYS_INSTRUCT,
