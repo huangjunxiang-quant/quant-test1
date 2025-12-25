@@ -341,4 +341,43 @@ if mode == "🔍 单股狙击 (Live)":
         if "WAIT" not in res['signal']:
             qty = calculate_position_size(account_size, risk_per_trade_pct, res['price'], res['stop_loss_atr'])
             direction = "做空" if "跌破" in res['signal'] else "买入"
-            st.success(f"🎯 **交易指令:** 建议 {direction} **{qty}** 股 (止损
+            st.success(f"🎯 **交易指令:** 建议 {direction} **{qty}** 股 (止损: ${res['stop_loss_atr']:.2f})")
+
+        fig = plot_chart(res['data'], res, height=600)
+        st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': True})
+
+        if res['abc']:
+            pA, pB, pC = res['abc']['pivots']
+            levels_data = [{"Level": "⛔ Stop Loss (A)", "Price": pA['price']}, {"Level": "🔵 Entry (C)", "Price": pC['price']}]
+            height_AB = pB['price'] - pA['price']
+            for r in [0.618, 1.0, 1.272, 1.618, 2.0]: levels_data.append({"Level": f"Fib {r}", "Price": pC['price'] + height_AB * r})
+            st.dataframe(pd.DataFrame(levels_data).style.format({"Price": "${:.2f}"}), use_container_width=True)
+
+        st.write("---")
+        st.subheader("🧠 召唤 Pro 3 战术指导")
+        if st.button("⚡ 请求 Pro 3 分析", key="btn_ask_ai"):
+            with st.spinner("🐶 狗蛋正在连接总部..."):
+                news_text = "暂无实时新闻"
+                curr_trend = "多头" if res['ema_bullish'] else "空头"
+                report = ask_goudan_pro3(res['ticker'], res['price'], curr_trend, res['rsi'], res['atr'], news_text)
+                st.markdown(f"<div style='background-color:#1E1E1E;border:1px solid #4285F4;padding:20px;border-radius:10px'>{report}</div>", unsafe_allow_html=True)
+
+else:
+    st.title("🚀 市场全境扫描")
+    if st.button("⚡ 开始扫描"):
+        tickers = HOT_STOCKS_LIST; progress = st.progress(0); results = []
+        def scan_one(t): return analyze_ticker_pro(t, interval="1d", lookback="5y", threshold=0.08, trend_order=trend_order)
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(scan_one, t): t for t in tickers}
+            for i, f in enumerate(futures):
+                r = f.result()
+                if r and "WAIT" not in r['signal']: results.append(r)
+                progress.progress((i+1)/len(tickers))
+        progress.empty()
+        if results:
+            st.success(f"发现 {len(results)} 个机会")
+            for i, r in enumerate(results):
+                with st.expander(f"{r['ticker']} | {r['signal']}", expanded=False):
+                    st.write(r['reasons'])
+                    st.plotly_chart(plot_chart(r['data'], r, height=400), key=f"chart_{i}")
+        else: st.warning("无信号")
