@@ -9,7 +9,7 @@ from datetime import timedelta
 import google.generativeai as genai
 
 # ==============================================================================
-# 1. 页面配置 (必须是第一行代码)
+# 1. 页面配置 (必须是第一行)
 # ==============================================================================
 st.set_page_config(page_title="Quant Sniper Pro (AI Fixed)", layout="wide", page_icon="⚡")
 
@@ -25,7 +25,7 @@ st.markdown("""
 # ==============================================================================
 # 2. 核心配置：Google Gemini AI (修复版)
 # ==============================================================================
-# 🔴 你的 API Key
+# 🔴 你的 API Key (已内置)
 GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI" 
 
 # 尝试配置 AI
@@ -81,19 +81,18 @@ def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
     请根据以上数据，以 Pro 3 的身份给我下达操作指令！
     """
     try:
-        # 🟢 修复点：改用 'gemini-pro' 模型，这是最稳定的版本，解决了 404 错误
+        # 🟢 修复点：改用 'gemini-pro' 模型，解决 404 错误
         model = genai.GenerativeModel("gemini-pro")
         
-        # 发送请求 (注意：gemini-pro 不支持 system_instruction 参数直接放在构造函数里，
-        # 我们把 system prompt 加到用户内容前面，效果是一样的)
+        # 发送请求 (gemini-pro 把 system prompt 加到用户内容前面最稳妥)
         full_prompt = system_instruction + "\n\n" + user_content
         response = model.generate_content(full_prompt)
         return response.text
     except Exception as e:
-        return f"❌ 狗蛋大脑连接失败：{str(e)} (可能是网络问题或 API Key 限制)"
+        return f"❌ 狗蛋大脑连接失败：{str(e)} (可能是模型版本不兼容，已切换至 gemini-pro)"
 
 # ==============================================================================
-# 3. 核心数学算法 (保持你的功能需求)
+# 3. 核心数学算法
 # ==============================================================================
 
 def get_swing_pivots_high_low(df, threshold=0.06):
@@ -142,7 +141,7 @@ def get_swing_pivots_high_low(df, threshold=0.06):
                 temp_high_date = date
     return pd.DataFrame(pivots)
 
-# --- 🟢 Scipy 拟合多重阻力线 (Order 可调) ---
+# --- 🟢 多重阻力线 ---
 def get_multiple_resistance_lines(df, lookback=1000, order=5, max_lines=5):
     highs = df['High'].values
     if len(highs) < 30: return []
@@ -207,7 +206,7 @@ def get_multiple_resistance_lines(df, lookback=1000, order=5, max_lines=5):
             
     return final_lines
 
-# --- 🔴 Scipy 拟合支撑线 ---
+# --- 🔴 支撑线 ---
 def get_support_trendline(df, lookback=1000, order=5):
     lows = df['Low'].values
     if len(lows) < 30: return None
@@ -439,10 +438,11 @@ if mode == "🔍 单股狙击 (Live)":
             res = analyze_ticker_pro(ticker, interval="1d", lookback=lookback, threshold=threshold_days, trend_order=trend_order)
             st.session_state['analysis_result'] = res 
 
-    # 🟢 只要 session_state 里有结果，就显示出来
+    # 🟢 只要 session_state 里有结果，就显示出来 (即使点击了下面的AI按钮刷新页面，这里也会执行)
     if 'analysis_result' in st.session_state and st.session_state['analysis_result']:
         res = st.session_state['analysis_result']
         
+        # 1. 基础数据
         m1, m2, m3 = st.columns(3)
         m1.metric("当前价格", f"${res['price']:.2f}", delta=res['signal'])
         m2.metric("ATR 波动", f"{res['atr']:.2f}")
@@ -473,7 +473,7 @@ if mode == "🔍 单股狙击 (Live)":
         st.subheader("🧠 召唤 Pro 3 战术指导")
         if st.button("⚡ 请求 Pro 3 分析", key="btn_ask_ai"):
             with st.spinner("🐶 狗蛋正在连接总部..."):
-                news_text = "暂无实时新闻"
+                news_text = "暂无实时新闻" # 简化版，可扩展抓取
                 curr_trend = "多头" if res['ema_bullish'] else "空头"
                 # 调用 AI
                 report = ask_goudan_pro3(res['ticker'], res['price'], curr_trend, res['rsi'], res['atr'], news_text)
