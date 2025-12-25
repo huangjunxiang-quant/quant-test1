@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from scipy.signal import argrelextrema
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-import google.generativeai as genai
+import google as genai
 
 # ==============================================================================
 # 1. 页面配置 (必须是第一行)
