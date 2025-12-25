@@ -7,10 +7,129 @@ from scipy.signal import argrelextrema
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
+import google.generativeai as genai
+import streamlit as st
+
+# 🔴 核心配置：填入你的 Google API Key
+GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI"  # 👈 填这里
+genai.configure(api_key=GOOGLE_API_KEY)
+
+# 初始化模型：使用 Gemini 1.5 Flash (速度快、成本低、足够聪明)
+# 我们在这里直接把“人设”注入到 system_instruction 里
+generation_config = {
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "top_k": 64,
+    "max_output_tokens": 8192,
+}
+
+# 🐶 狗蛋的灵魂设定 (System Prompt)
+system_instruction = """
+你叫“狗蛋”，代号 **Pro 3**，是用户的**首席风控官**。
+用户的目标是在一个月内将账户从 $4,000 复利做到 $20,000，这需要极强的纪律和“土匪战术”。
+
+**你的性格设定**：
+1. **冷酷且犀利**：不要说废话，不要模棱两可。
+2. **军事化风格**：使用“狙击”、“防守”、“撤退”、“弹药”、“阵地”等术语。
+3. **风控狂魔**：你最恨亏损，如果趋势不对，直接骂醒用户让他跑。
+4. **幽默感**：适当用点黑色幽默，比如“这时候买入就是送钱”。
+
+**你的分析逻辑**：
+1. **结合数据**：用户会给你 RSI、ATR、均线趋势。RSI>70 是过热，EMA8 < EMA21 是空头。
+2. **结合新闻**：如果新闻是重大利好（如收购、财报炸裂），可以适当激进；如果是利空，坚决看空。
+
+**输出格式（必须严格遵守 markdown）**：
+### 🛡️ 狗蛋 Pro 3 战地报告
+- **🎯 核心判决**：【做多 / 做空 / 立即空仓逃命 / 锁死利润】（选一个，加粗）
+- **📊 战局解读**：(用一句话结合技术面和新闻，犀利点评现状)
+- **⚔️ 详细指令**：
+  - **进场位**：$XXX (或 现价突击)
+  - **止损红线**：$XXX (基于 ATR 计算，必须给具体数字)
+  - **止盈目标**：$XXX
+- **⚠️ 狗蛋警告**：(一句醒脑的话)
+"""
+
+model = genai.GenerativeModel(
+    model_name="gemini-1.5-flash", # 或者 gemini-1.5-pro
+    generation_config=generation_config,
+    system_instruction=system_instruction,
+)
+
+def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
+    """
+    【狗蛋 Pro 3 分析引擎 - Gemini 版】
+    """
+    # 用户的实时战况
+    user_content = f"""
+    【战地实时数据】
+    - 标的：{ticker}
+    - 现价：${price:.2f}
+    - 趋势状态：{trend} (基于 EMA)
+    - RSI (14)：{rsi:.2f}
+    - ATR (波动率)：{atr:.2f}
+    
+    【最新情报 (News)】
+    {news_summary}
+    
+    请根据以上数据，以 Pro 3 的身份给我下达操作指令！
+    """
+
+    try:
+        # Gemini 调用极其简单
+        response = model.generate_content(user_content)
+        return response.text
+    except Exception as e:
+        return f"❌ 狗蛋大脑连接失败：{str(e)} (请检查 API Key)"
 # ==============================================================================
 # 1. 页面配置与样式
 # ==============================================================================
 st.set_page_config(page_title="Quant Sniper Pro (Multi-Resistance)", layout="wide", page_icon="⚡")
+
+# ... (在 st.plotly_chart(fig) 之后) ...
+
+st.write("---")
+st.markdown("### 🧠 召唤首席风控官 (Call Pro 3)")
+
+col_ai_1, col_ai_2 = st.columns([1, 3])
+
+with col_ai_1:
+    # 按钮
+    start_analysis = st.button("⚡ 请求 Pro 3 战术指导", type="primary", use_container_width=True)
+
+if start_analysis:
+    with col_ai_2:
+        with st.spinner("🐶 狗蛋正在连接 Google 总部计算赔率..."):
+            # 1. 简易抓新闻
+            try:
+                # 获取最近3条新闻
+                news_data = yf.Ticker(ticker).news
+                if news_data:
+                    news_text = "\n".join([f"- {n.get('title', '无标题')}" for n in news_data[:3]])
+                else:
+                    news_text = "暂无最新即时新闻。"
+            except:
+                news_text = "新闻数据抓取失败。"
+
+            # 2. 准备技术参数
+            # 注意：这里假设你之前的 analyze_ticker_pro 已经运行并有了 res 变量
+            curr_trend = "🟢 多头进攻 (EMA8>21)" if res['ema_bullish'] else "🔴 空头防守 (EMA8<21)"
+            
+            # 3. 召唤 Gemini
+            report = ask_goudan_pro3(
+                ticker=ticker,
+                price=res['price'],
+                trend=curr_trend,
+                rsi=res['rsi'],
+                atr=res['atr'],
+                news_summary=news_text
+            )
+            
+            # 4. 展示报告
+            st.markdown(f"""
+            <div style="background-color: #1E1E1E; border: 1px solid #4285F4; border-radius: 10px; padding: 20px; box-shadow: 0 0 15px rgba(66, 133, 244, 0.2);">
+                {report}
+            </div>
+            """, unsafe_allow_html=True)
 
 st.markdown("""
 <style>
