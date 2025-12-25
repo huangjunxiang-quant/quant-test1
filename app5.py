@@ -32,7 +32,7 @@ ai_model = None
 try:
     genai.configure(api_key=GOOGLE_API_KEY)
     # 使用 gemini-pro，它是目前兼容性最好的官方模型
-    ai_model = genai.GenerativeModel('gemini-pro')
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
     st.error(f"AI 初始化失败: {e}")
 
