@@ -6,24 +6,33 @@ import plotly.graph_objects as go
 from scipy.signal import argrelextrema
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-
 import google.generativeai as genai
-import streamlit as st
 
-# 🔴 核心配置：填入你的 Google API Key
-GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI"  # 👈 填这里
-genai.configure(api_key=GOOGLE_API_KEY)
+# ==============================================================================
+# 1. 页面配置与样式 (UI Configuration)
+# ==============================================================================
+st.set_page_config(page_title="Quant Sniper Pro (AI Commander)", layout="wide", page_icon="⚡")
 
-# 初始化模型：使用 Gemini 1.5 Flash (速度快、成本低、足够聪明)
-# 我们在这里直接把“人设”注入到 system_instruction 里
-generation_config = {
-    "temperature": 0.7,
-    "top_p": 0.95,
-    "top_k": 64,
-    "max_output_tokens": 8192,
-}
+st.markdown("""
+<style>
+    .metric-card { background-color: #1e1e1e; border: 1px solid #333; padding: 15px; border-radius: 8px; text-align: center; }
+    .stToast { background-color: #333; color: white; }
+    [data-testid="stSidebar"] { background-color: #111; }
+    [data-testid="stDataFrame"] { width: 100%; }
+</style>
+""", unsafe_allow_html=True)
 
-# 🐶 狗蛋的灵魂设定 (System Prompt)
+# ==============================================================================
+# 2. 核心配置：Google Gemini AI (狗蛋 Pro 3)
+# ==============================================================================
+# 🔴 请确保你的 API Key 是有效的
+GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI"  # 👈 填入你的 Key
+try:
+    genai.configure(api_key=GOOGLE_API_KEY)
+except:
+    pass # 防止初始化报错卡死界面
+
+# 🐶 狗蛋的灵魂设定
 system_instruction = """
 你叫“狗蛋”，代号 **Pro 3**，是用户的**首席风控官**。
 用户的目标是在一个月内将账户从 $4,000 复利做到 $20,000，这需要极强的纪律和“土匪战术”。
@@ -36,7 +45,7 @@ system_instruction = """
 
 **你的分析逻辑**：
 1. **结合数据**：用户会给你 RSI、ATR、均线趋势。RSI>70 是过热，EMA8 < EMA21 是空头。
-2. **结合新闻**：如果新闻是重大利好（如收购、财报炸裂），可以适当激进；如果是利空，坚决看空。
+2. **结合新闻**：如果新闻是重大利好，可以适当激进；如果是利空，坚决看空。
 
 **输出格式（必须严格遵守 markdown）**：
 ### 🛡️ 狗蛋 Pro 3 战地报告
@@ -49,22 +58,13 @@ system_instruction = """
 - **⚠️ 狗蛋警告**：(一句醒脑的话)
 """
 
-model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash", # 或者 gemini-1.5-pro
-    generation_config=generation_config,
-    system_instruction=system_instruction,
-)
-
 def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
-    """
-    【狗蛋 Pro 3 分析引擎 - Gemini 版】
-    """
-    # 用户的实时战况
+    """ 狗蛋 Pro 3 分析引擎 """
     user_content = f"""
     【战地实时数据】
     - 标的：{ticker}
     - 现价：${price:.2f}
-    - 趋势状态：{trend} (基于 EMA)
+    - 趋势状态：{trend}
     - RSI (14)：{rsi:.2f}
     - ATR (波动率)：{atr:.2f}
     
@@ -73,79 +73,23 @@ def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
     
     请根据以上数据，以 Pro 3 的身份给我下达操作指令！
     """
-
     try:
-        # Gemini 调用极其简单
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            generation_config={"temperature": 0.7, "max_output_tokens": 1000},
+            system_instruction=system_instruction,
+        )
         response = model.generate_content(user_content)
         return response.text
     except Exception as e:
         return f"❌ 狗蛋大脑连接失败：{str(e)} (请检查 API Key)"
-# ==============================================================================
-# 1. 页面配置与样式
-# ==============================================================================
-st.set_page_config(page_title="Quant Sniper Pro (Multi-Resistance)", layout="wide", page_icon="⚡")
-
-# ... (在 st.plotly_chart(fig) 之后) ...
-
-st.write("---")
-st.markdown("### 🧠 召唤首席风控官 (Call Pro 3)")
-
-col_ai_1, col_ai_2 = st.columns([1, 3])
-
-with col_ai_1:
-    # 按钮
-    start_analysis = st.button("⚡ 请求 Pro 3 战术指导", type="primary", use_container_width=True)
-
-if start_analysis:
-    with col_ai_2:
-        with st.spinner("🐶 狗蛋正在连接 Google 总部计算赔率..."):
-            # 1. 简易抓新闻
-            try:
-                # 获取最近3条新闻
-                news_data = yf.Ticker(ticker).news
-                if news_data:
-                    news_text = "\n".join([f"- {n.get('title', '无标题')}" for n in news_data[:3]])
-                else:
-                    news_text = "暂无最新即时新闻。"
-            except:
-                news_text = "新闻数据抓取失败。"
-
-            # 2. 准备技术参数
-            # 注意：这里假设你之前的 analyze_ticker_pro 已经运行并有了 res 变量
-            curr_trend = "🟢 多头进攻 (EMA8>21)" if res['ema_bullish'] else "🔴 空头防守 (EMA8<21)"
-            
-            # 3. 召唤 Gemini
-            report = ask_goudan_pro3(
-                ticker=ticker,
-                price=res['price'],
-                trend=curr_trend,
-                rsi=res['rsi'],
-                atr=res['atr'],
-                news_summary=news_text
-            )
-            
-            # 4. 展示报告
-            st.markdown(f"""
-            <div style="background-color: #1E1E1E; border: 1px solid #4285F4; border-radius: 10px; padding: 20px; box-shadow: 0 0 15px rgba(66, 133, 244, 0.2);">
-                {report}
-            </div>
-            """, unsafe_allow_html=True)
-
-st.markdown("""
-<style>
-    .metric-card { background-color: #1e1e1e; border: 1px solid #333; padding: 15px; border-radius: 8px; text-align: center; }
-    .stToast { background-color: #333; color: white; }
-    [data-testid="stSidebar"] { background-color: #111; }
-    [data-testid="stDataFrame"] { width: 100%; }
-</style>
-""", unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. 核心数学算法 (支持多重阻力线)
+# 3. 核心数学算法 (ZigZag + Scipy拟合 + 视图控制)
 # ==============================================================================
 
 def get_swing_pivots_high_low(df, threshold=0.06):
-    """ [精度版] ZigZag 算法 """
+    """ [精度版] ZigZag 算法 (High/Low) """
     pivots = []
     last_pivot_price = df['Close'].iloc[0]
     last_pivot_date = df.index[0]
@@ -171,7 +115,6 @@ def get_swing_pivots_high_low(df, threshold=0.06):
                 pivots.append({'date': last_pivot_date, 'price': last_pivot_price, 'type': 1})
                 temp_low_price = low
                 temp_low_date = date
-                
         elif last_pivot_type == -1: 
             if high > temp_high_price:
                 temp_high_price = high
@@ -181,7 +124,6 @@ def get_swing_pivots_high_low(df, threshold=0.06):
                 last_pivot_type = 1 
                 temp_low_price = low
                 temp_low_date = date
-                
         elif last_pivot_type == 1: 
             if low < temp_low_price:
                 temp_low_price = low
@@ -191,108 +133,70 @@ def get_swing_pivots_high_low(df, threshold=0.06):
                 last_pivot_type = -1 
                 temp_high_price = high
                 temp_high_date = date
-                
     return pd.DataFrame(pivots)
 
-# --- 🟢 [升级版] 多重阻力趋势线生成器 ---
-def get_multiple_resistance_lines(df, lookback=1000, order=5, max_lines=5):
-    """ 
-    返回一个列表，包含多条有效的下降阻力线 
-    逻辑：遍历多个高点组合，打分，然后去重
-    """
+# --- 🟢 Scipy 拟合阻力线 (可调 order) ---
+def get_resistance_trendline(df, lookback=1000, order=5):
     highs = df['High'].values
-    if len(highs) < 30: return []
+    if len(highs) < 30: return None
     
     real_lookback = min(lookback, len(highs))
     start_idx = len(highs) - real_lookback
     subset_highs = highs[start_idx:]
     global_offset = start_idx
 
-    # 1. 找波峰
     peak_indexes = argrelextrema(subset_highs, np.greater, order=order)[0]
-    if len(peak_indexes) < 2: return []
+    if len(peak_indexes) < 2: return None
 
-    candidates = []
+    best_line = None
+    max_score = -float('inf')
     
-    # 按高度排序，取前 8 个最高点作为起点 A (增加搜索广度)
     sorted_peaks = sorted(peak_indexes, key=lambda i: subset_highs[i], reverse=True)
-    potential_start_points = sorted_peaks[:8] 
+    potential_start_points = sorted_peaks[:3] 
 
-    # 2. 暴力搜索所有可能的连线
     for idx_A in potential_start_points:
         price_A = subset_highs[idx_A]
         for idx_B in peak_indexes:
             if idx_B <= idx_A: continue 
-            
             price_B = subset_highs[idx_B]
-            if price_B >= price_A: continue # 必须是下降趋势
+            if price_B >= price_A: continue 
             
             slope = (price_B - price_A) / (idx_B - idx_A)
             intercept = price_A - slope * idx_A
             
-            hits = 0       
-            violations = 0 
-            
-            # 验证拟合度
+            hits = 0; violations = 0 
             for k in peak_indexes:
                 if k <= idx_A: continue
                 trend_price = slope * k + intercept
                 actual_price = subset_highs[k]
-                
-                # 容错 1.5%
                 if abs(actual_price - trend_price) < actual_price * 0.015: hits += 1
                 elif actual_price > trend_price * 1.015: violations += 1
             
-            # 打分
             score = hits - (violations * 2) 
-            if abs(slope) < (price_A * 0.05): score += 0.5 # 奖励平滑趋势
+            if abs(slope) < (price_A * 0.05): score += 0.5
 
-            # 只要分数不是太差，就加入候选
-            if score > -2:
-                # 计算当前价格位置，用于去重
-                last_idx = len(df) - 1
-                # 注意：这里 slope 是基于 subset 索引的，计算全局 current price 需要换算
-                # 全局 slope = slope (没变)
-                # 全局 intercept = price_A - slope * (idx_A + global_offset)
-                
-                # 为了方便比较，我们把所有数据转为全局坐标
-                idx_A_glob = idx_A + global_offset
-                intercept_glob = price_A - slope * idx_A_glob
-                price_now = slope * last_idx + intercept_glob
-                
-                candidates.append({
-                    'x1': df.index[idx_A_glob],
-                    'y1': price_A,
-                    'x2': df.index[last_idx], # 画到今天
-                    'y2': price_now,
-                    'price_now': price_now,
-                    'score': score,
-                    'slope': slope,
-                    'breakout': df['Close'].iloc[-1] > price_now
-                })
+            if score > max_score:
+                max_score = score
+                best_line = {'slope': slope, 'intercept': intercept, 'start_idx_rel': idx_A}
 
-    # 3. 排序与去重 (Smart Deduplication)
-    # 按分数从高到低排序
-    candidates.sort(key=lambda x: x['score'], reverse=True)
-    
-    final_lines = []
-    
-    for line in candidates:
-        is_duplicate = False
-        for existing in final_lines:
-            # 去重逻辑：如果两条线在当前的预测价格相差小于 3%，认为是同一阻力带
-            price_diff_pct = abs(line['price_now'] - existing['price_now']) / existing['price_now']
-            if price_diff_pct < 0.03: 
-                is_duplicate = True
-                break
+    if best_line:
+        slope = best_line['slope']
+        idx_A_glob = global_offset + best_line['start_idx_rel']
+        global_intercept = subset_highs[best_line['start_idx_rel']] - slope * idx_A_glob
+        last_idx = len(df) - 1
+        trendline_price_now = slope * last_idx + global_intercept
         
-        if not is_duplicate:
-            final_lines.append(line)
-            if len(final_lines) >= max_lines: break # 只取前N条
-            
-    return final_lines
+        return {
+            'x1': df.index[idx_A_glob], 
+            'y1': slope * idx_A_glob + global_intercept,
+            'x2': df.index[last_idx], 
+            'y2': trendline_price_now,
+            'price_now': trendline_price_now,
+            'breakout': df['Close'].iloc[-1] > trendline_price_now
+        }
+    return None
 
-# --- 🔴 支撑趋势线 (保持单条最优，避免图表太乱) ---
+# --- 🔴 Scipy 拟合支撑线 (可调 order) ---
 def get_support_trendline(df, lookback=1000, order=5):
     lows = df['Low'].values
     if len(lows) < 30: return None
@@ -300,18 +204,22 @@ def get_support_trendline(df, lookback=1000, order=5):
     start_idx = len(lows) - real_lookback
     subset_lows = lows[start_idx:]
     global_offset = start_idx
+
     trough_indexes = argrelextrema(subset_lows, np.less, order=order)[0]
     if len(trough_indexes) < 2: return None
+
     best_line = None
     max_score = -float('inf')
     sorted_troughs = sorted(trough_indexes, key=lambda i: subset_lows[i], reverse=False)
     potential_start_points = sorted_troughs[:3]
+
     for idx_A in potential_start_points:
         price_A = subset_lows[idx_A]
         for idx_B in trough_indexes:
             if idx_B <= idx_A: continue 
             price_B = subset_lows[idx_B]
             if price_B <= price_A: continue 
+            
             slope = (price_B - price_A) / (idx_B - idx_A)
             intercept = price_A - slope * idx_A
             hits = 0; violations = 0 
@@ -321,19 +229,24 @@ def get_support_trendline(df, lookback=1000, order=5):
                 actual_price = subset_lows[k]
                 if abs(actual_price - trend_price) < actual_price * 0.015: hits += 1
                 elif actual_price < trend_price * 0.985: violations += 1
+            
             score = hits - (violations * 2)
             if score > max_score:
                 max_score = score
                 best_line = {'slope': slope, 'intercept': intercept, 'start_idx_rel': idx_A}
+
     if best_line:
         slope = best_line['slope']
         idx_A_glob = global_offset + best_line['start_idx_rel']
         global_intercept = subset_lows[best_line['start_idx_rel']] - slope * idx_A_glob
         last_idx = len(df) - 1
         trendline_price_now = slope * last_idx + global_intercept
+        
         return {
-            'x1': df.index[idx_A_glob], 'y1': slope * idx_A_glob + global_intercept,
-            'x2': df.index[last_idx], 'y2': trendline_price_now,
+            'x1': df.index[idx_A_glob], 
+            'y1': slope * idx_A_glob + global_intercept,
+            'x2': df.index[last_idx], 
+            'y2': trendline_price_now,
             'price_now': trendline_price_now,
             'breakdown': df['Close'].iloc[-1] < trendline_price_now
         }
@@ -342,11 +255,7 @@ def get_support_trendline(df, lookback=1000, order=5):
 def calculate_advanced_indicators(df):
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
     df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
+    df['RSI'] = 100 - (100 / (1 + (df['Close'].diff().where(lambda x: x>0, 0).rolling(14).mean() / df['Close'].diff().where(lambda x: x<0, 0).abs().rolling(14).mean())))
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
@@ -367,7 +276,7 @@ def generate_option_plan(ticker, current_price, signal_type, rsi):
     plan = {}
     strike = math.ceil(current_price)
     strike_put = math.floor(current_price)
-    if "突破" in signal_type or "双重共振" in signal_type or "ABC" in signal_type:
+    if "突破" in signal_type or "双重" in signal_type or "ABC" in signal_type:
         plan['name'] = "🚀 做多 (Call)"
         plan['strategy'] = "Long Call"
         plan['legs'] = f"买入 Strike ${strike} Call"
@@ -381,91 +290,43 @@ def generate_option_plan(ticker, current_price, signal_type, rsi):
     return plan
 
 # ==============================================================================
-# 3. 核心绘图系统 (支持多条线)
+# 4. 绘图与分析逻辑
 # ==============================================================================
 def plot_chart(df, res, height=600):
     fig = go.Figure()
-    
-    # 1. K 线
-    fig.add_trace(go.Candlestick(
-        x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], 
-        name='Price',
-        increasing_line_color='#26a69a', increasing_fillcolor='#26a69a', 
-        decreasing_line_color='#ef5350', decreasing_fillcolor='#ef5350'
-    ))
-    
-    # 2. EMA
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price', increasing_line_color='#26a69a', decreasing_line_color='#ef5350'))
     fig.add_trace(go.Scatter(x=df.index, y=df['EMA_21'], line=dict(color='rgba(255, 165, 0, 0.7)', width=1), name="EMA 21"))
     fig.add_trace(go.Scatter(x=df.index, y=df['EMA_200'], line=dict(color='rgba(255, 255, 255, 0.5)', width=1, dash='dot'), name="EMA 200"))
     
-    # 3. 阻力线 (多条 - 循环绘制)
-    if res['resistance_lines']:
-        for i, line in enumerate(res['resistance_lines']):
-            # 第一条(得分最高)画粗一点，后面的画细一点，颜色透明度递减
-            width = 3 if i == 0 else 1
-            opacity = 1.0 if i == 0 else 0.6
-            color = f"rgba(0, 255, 255, {opacity})" # Cyan
-            
-            fig.add_trace(go.Scatter(
-                x=[line['x1'], df.index[-1]], 
-                y=[line['y1'], line['price_now']], 
-                mode='lines', 
-                name=f'Res Trend {i+1}', 
-                line=dict(color=color, width=width),
-                hoverinfo='name+y'
-            ))
-
-    # 4. 支撑线
+    if res['trend_res']:
+        tr = res['trend_res']
+        fig.add_trace(go.Scatter(x=[tr['x1'], df.index[-1]], y=[tr['y1'], tr['price_now']], mode='lines', name='Resistance', line=dict(color='cyan', width=2)))
     if res['trend_sup']:
         ts = res['trend_sup']
-        fig.add_trace(go.Scatter(
-            x=[ts['x1'], df.index[-1]], y=[ts['y1'], ts['price_now']], 
-            mode='lines', name='Support', line=dict(color='#FF00FF', width=2)
-        ))
-
-    # 5. ABC & Fib
+        fig.add_trace(go.Scatter(x=[ts['x1'], df.index[-1]], y=[ts['y1'], ts['price_now']], mode='lines', name='Support', line=dict(color='#FF00FF', width=2)))
+    
     if res['abc']:
         pA, pB, pC = res['abc']['pivots']
         fig.add_trace(go.Scatter(x=[pA['date'], pB['date'], pC['date']], y=[pA['price'], pB['price'], pC['price']], mode='lines', name='ABC', line=dict(color='yellow', width=2, dash='dash')))
-        fig.add_trace(go.Scatter(x=[pA['date'], pB['date'], pC['date']], y=[pA['price'], pB['price'], pC['price']], mode='markers+text', text=[f"A<br>{pA['price']:.1f}", f"B<br>{pB['price']:.1f}", f"C<br>{pC['price']:.1f}"], textposition=["bottom center", "top center", "bottom center"], textfont=dict(color="yellow", size=12, weight="bold"), marker=dict(size=10, color='yellow', symbol='diamond'), showlegend=False))
-
         height_AB = pB['price'] - pA['price']
-        fib_levels = [(0.618, "gray", 1, "dot", "0.618"), (1.0, "gray", 1, "dash", "1.0"), (1.618, "#00FF00", 2, "solid", "🎯 1.618"), (2.618, "gold", 2, "solid", "🚀 2.618")]
-        
-        last_date = df.index[-1]
-        start_date = pC['date']
-        future_date = last_date + timedelta(days=20) 
-        
-        for ratio, color, width, dash, label in fib_levels:
-            lvl_price = pC['price'] + height_AB * ratio
-            fig.add_shape(type="line", x0=start_date, y0=lvl_price, x1=future_date, y1=lvl_price, line=dict(color=color, width=width, dash=dash))
-            label_text = f"{label}: ${lvl_price:.2f}"
-            fig.add_annotation(x=last_date, y=lvl_price, text=label_text, showarrow=False, xanchor="left", yanchor="bottom", font=dict(color=color, size=11, family="Arial Black"), bgcolor="rgba(0,0,0,0.5)")
+        last_date = df.index[-1]; start_date = pC['date']; future_date = last_date + timedelta(days=20)
+        fib_levels = [(0.618, "gray", "dot"), (1.0, "gray", "dash"), (1.618, "#00FF00", "solid"), (2.618, "gold", "solid")]
+        for ratio, color, style in fib_levels:
+            lvl = pC['price'] + height_AB * ratio
+            if lvl > df['Low'].min()*0.5 and lvl < df['High'].max()*3:
+                fig.add_shape(type="line", x0=start_date, y0=lvl, x1=future_date, y1=lvl, line=dict(color=color, width=1, dash=style))
+                fig.add_annotation(x=last_date, y=lvl, text=f"{ratio}: ${lvl:.2f}", showarrow=False, xanchor="left", bgcolor="rgba(0,0,0,0.5)")
 
-    # 6. 视图控制
+    # 智能缩放 (防塌缩)
     default_start_date = df.index[-1] - timedelta(days=90)
     view_data = df[df.index >= default_start_date]
-    if not view_data.empty:
-        y_min = view_data['Low'].min(); y_max = view_data['High'].max()
-        y_buffer = (y_max - y_min) * 0.1
-        y_range = [y_min - y_buffer, y_max + y_buffer]
-    else: y_range = None
-
-    fig.update_layout(
-        template="plotly_dark", height=height, margin=dict(l=0,r=100,t=30,b=0),
-        xaxis_rangeslider_visible=False, hovermode="x unified", dragmode='pan',
-        xaxis=dict(range=[default_start_date, df.index[-1] + timedelta(days=10)], type="date"),
-        yaxis=dict(fixedrange=False, range=y_range) 
-    )
-    if len(df) > 2:
-        diff = df.index[1] - df.index[0]
-        if diff.days >= 1: fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
-            
+    y_range = [view_data['Low'].min()*0.9, view_data['High'].max()*1.1] if not view_data.empty else None
+    
+    fig.update_layout(template="plotly_dark", height=height, margin=dict(l=0,r=100,t=30,b=0), xaxis_rangeslider_visible=False, dragmode='pan',
+                      xaxis=dict(range=[default_start_date, df.index[-1] + timedelta(days=10)]), yaxis=dict(fixedrange=False, range=y_range))
+    if len(df)>2 and (df.index[1]-df.index[0]).days>=1: fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
     return fig
 
-# ==============================================================================
-# 4. 分析逻辑 (Controller)
-# ==============================================================================
 def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06, trend_order=5):
     try:
         stock = yf.Ticker(ticker)
@@ -478,18 +339,14 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06, tre
         if df.index.tz is not None: df.index = df.index.tz_localize(None)
         
         df = calculate_advanced_indicators(df)
+        current_price = df['Close'].iloc[-1]; current_rsi = df['RSI'].iloc[-1]; current_atr = df['ATR'].iloc[-1]
         
-        current_price = df['Close'].iloc[-1]
-        current_rsi = df['RSI'].iloc[-1]
-        current_atr = df['ATR'].iloc[-1]
-        
-        # (A) 趋势线分析
+        # 趋势线 (传入 trend_order)
         lb_trend = 300 if interval in ["5m", "15m"] else 1000
-        # 🟢 获取多条阻力线
-        res_lines = get_multiple_resistance_lines(df, lookback=lb_trend, order=trend_order, max_lines=5)
+        trend_res = get_resistance_trendline(df, lookback=lb_trend, order=trend_order)
         trend_sup = get_support_trendline(df, lookback=lb_trend, order=trend_order)
         
-        # (B) ABC 结构
+        # ABC
         abc_res = None
         pivots_df = get_swing_pivots_high_low(df, threshold=threshold)
         if len(pivots_df) >= 3:
@@ -497,184 +354,107 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06, tre
                 pA, pB, pC = pivots_df.iloc[i], pivots_df.iloc[i+1], pivots_df.iloc[i+2]
                 if pA['type'] == -1 and pB['type'] == 1 and pC['type'] == -1:
                     if pC['price'] > pA['price'] and pB['price'] > pA['price']:
-                        height = pB['price'] - pA['price']
-                        target = pC['price'] + height * 1.618
+                        height = pB['price'] - pA['price']; target = pC['price'] + height * 1.618
                         abc_res = {'pivots': (pA, pB, pC), 'target': target}
                         break 
 
-        # 4. 信号判定
-        signal = "WAIT"
-        signal_color = "gray"
-        reasons = []
-        
-        # 检查是否突破了任意一条阻力线
-        is_breakout = False
-        breakout_count = 0
-        if res_lines:
-            for line in res_lines:
-                if line['breakout']: 
-                    is_breakout = True
-                    breakout_count += 1
-        
-        if is_breakout:
-            if breakout_count >= 2:
-                signal = "🔥🔥 强势连破"
-                reasons.append(f"连破 {breakout_count} 条阻力线")
-            else:
-                signal = "🔥 向上突破"
-                reasons.append("突破主要阻力线")
-            signal_color = "#00FFFF"
-            
+        signal = "WAIT"; signal_color = "gray"; reasons = []
+        if trend_res and trend_res['breakout']:
+            signal = "🔥 向上突破"; signal_color = "#00FFFF"; reasons.append("突破长期阻力")
         if abc_res and current_price > abc_res['pivots'][2]['price']:
-            if "突破" in signal: signal = "🚀 双重共振买点"
-            else: 
-                signal = "🟢 ABC 结构确立"
-                signal_color = "#00FF00"
-            reasons.append("回踩C点确认")
+            if "突破" in signal: signal = "🚀 双重共振"; reasons.append("ABC结构确认")
+            else: signal = "🟢 ABC 结构"; signal_color = "#00FF00"; reasons.append("回踩C点")
+        if trend_sup and trend_sup['breakdown']:
+            if "双重" not in signal:
+                signal = "📉 趋势线跌破"; signal_color = "#FF00FF"; reasons.append("跌破长期支撑")
 
-        is_breakdown = trend_sup and trend_sup['breakdown']
-        if is_breakdown:
-            if "双重" not in signal: 
-                signal = "📉 趋势线跌破"
-                signal_color = "#FF00FF"
-                reasons.append("跌破长期上升支撑")
-
-        if "跌破" in signal: stop_loss_level = current_price + (2.0 * current_atr)
-        else: stop_loss_level = current_price - (2.0 * current_atr)
-        
-        option_plan = None
-        if "突破" in signal or "ABC" in signal or "跌破" in signal:
-            option_plan = generate_option_plan(ticker, current_price, signal, current_rsi)
+        stop_loss = current_price + (2.0 * current_atr) if "跌破" in signal else current_price - (2.0 * current_atr)
+        option_plan = generate_option_plan(ticker, current_price, signal, current_rsi) if "WAIT" not in signal else None
 
         return {
-            "ticker": ticker,
-            "price": current_price,
-            "signal": signal,
-            "color": signal_color,
-            "reasons": ", ".join(reasons),
-            "rsi": current_rsi,
-            "atr": current_atr,
-            "stop_loss_atr": stop_loss_level,
-            "resistance_lines": res_lines, # 返回列表
-            "trend_sup": trend_sup,
-            "abc": abc_res,
-            "data": df,
-            "option_plan": option_plan
+            "ticker": ticker, "price": current_price, "signal": signal, "color": signal_color, "reasons": ", ".join(reasons),
+            "rsi": current_rsi, "atr": current_atr, "stop_loss_atr": stop_loss, "trend_res": trend_res, "trend_sup": trend_sup,
+            "abc": abc_res, "data": df, "option_plan": option_plan, "ema_bullish": df['EMA_21'].iloc[-1] > df['EMA_200'].iloc[-1]
         }
-
-    except Exception:
-        return None
+    except: return None
 
 # ==============================================================================
 # 5. UI 主程序
 # ==============================================================================
 st.sidebar.header("🕹️ 首席风控官设置")
-
 account_size = st.sidebar.number_input("账户总资金 ($)", value=10000, step=1000)
 risk_per_trade_pct = st.sidebar.slider("单笔风险 (%)", 0.5, 5.0, 2.0, 0.5) / 100
-
 st.sidebar.markdown("### 📉 趋势线设置")
 trend_order = st.sidebar.slider("拟合平滑度 (Order)", 2, 20, 5)
 
 st.sidebar.markdown("---")
 mode = st.sidebar.radio("作战模式:", ["🔍 单股狙击 (Live)", "🚀 市场全境扫描 (Hot 50)"])
 
-HOT_STOCKS_LIST = [
-    "TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NFLX",
-    "AMD", "AVGO", "TSM", "SMCI", "ARM", "MU", "INTC", "PLTR", "AI", "PATH", "SNOW", "CRWD", "PANW",
-    "MSTR", "COIN", "MARA", "RIOT", "CLSK", "HOOD",
-    "UPST", "AFRM", "SOFI", "CVNA", "RIVN", "LCID", "DKNG", "RBLX", "U", "NET",
-    "BABA", "PDD", "NIO", "XPEV", "LI", "JD",
-    "GME", "AMC", "SPCE", "TQQQ", "SOXL"
-]
+HOT_STOCKS_LIST = ["TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NFLX", "AMD", "AVGO", "MSTR", "COIN", "MARA", "CLSK", "UPST", "AFRM", "SOFI", "GME", "AMC", "TQQQ", "SOXL"]
 
 if mode == "🔍 单股狙击 (Live)":
-    st.title("🛡️ 狗蛋风控指挥舱 (Multi-Res)")
-    
+    st.title("🛡️ 狗蛋风控指挥舱 (AI Commander)")
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1: ticker = st.text_input("代码", value="TSLA").upper()
     with c2: lookback = st.selectbox("回溯", ["2y", "5y", "10y"], index=1)
     with c3: threshold_days = st.slider("ABC灵敏度", 0.03, 0.15, 0.08, 0.01)
 
-    with st.spinner(f"正在全方位分析 {ticker}..."):
-        res = analyze_ticker_pro(ticker, interval="1d", lookback=lookback, threshold=threshold_days, trend_order=trend_order)
-        
-        if res:
-            m1, m2, m3 = st.columns(3)
-            m1.metric("当前价格", f"${res['price']:.2f}", delta=f"{res['signal']}")
-            m2.metric("ATR 波动", f"{res['atr']:.2f}")
-            m3.metric("RSI 情绪", f"{res['rsi']:.1f}")
+    if st.button("开始分析"):
+        with st.spinner(f"分析 {ticker}..."):
+            res = analyze_ticker_pro(ticker, interval="1d", lookback=lookback, threshold=threshold_days, trend_order=trend_order)
+            if res:
+                # 1. 基础数据
+                m1, m2, m3 = st.columns(3)
+                m1.metric("当前价格", f"${res['price']:.2f}", delta=res['signal'])
+                m2.metric("ATR 波动", f"{res['atr']:.2f}")
+                m3.metric("RSI", f"{res['rsi']:.1f}")
+                
+                # 2. 信号
+                st.markdown(f"<div style='background-color:#262730;padding:15px;border-radius:10px;border-left:10px solid {res['color']}'><h3>{res['signal']}</h3><p>{res['reasons']}</p></div>", unsafe_allow_html=True)
+                
+                if "WAIT" not in res['signal']:
+                    qty = calculate_position_size(account_size, risk_per_trade_pct, res['price'], res['stop_loss_atr'])
+                    direction = "做空" if "跌破" in res['signal'] else "买入"
+                    st.success(f"🎯 **交易指令:** 建议 {direction} **{qty}** 股 (止损: ${res['stop_loss_atr']:.2f})")
 
-            st.markdown(f"""
-            <div style="background-color: #262730; padding: 15px; border-radius: 10px; border-left: 10px solid {res['color']}; margin-bottom: 20px;">
-                <h3 style="color: {res['color']}; margin:0;">{res['signal']}</h3>
-                <p style="color: #ccc; margin:0;">逻辑: {res['reasons']}</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            if "WAIT" not in res['signal']:
-                qty = calculate_position_size(account_size, risk_per_trade_pct, res['price'], res['stop_loss_atr'])
-                direction = "做空/卖出" if "跌破" in res['signal'] else "买入"
-                st.success(f"🎯 **交易指令:** 建议 {direction} **{qty}** 股 (止损: ${res['stop_loss_atr']:.2f})")
+                # 3. 图表
+                fig = plot_chart(res['data'], res, height=600)
+                st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': True})
 
-            # 绘图
-            fig = plot_chart(res['data'], res, height=600)
-            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': True})
-
-            if res['abc']:
-                pA, pB, pC = res['abc']['pivots']
-                height_AB = pB['price'] - pA['price']
-                levels_data = []
-                levels_data.append({"Level": "⛔ Stop Loss (A)", "Price": pA['price']})
-                levels_data.append({"Level": "🔵 Entry (C)", "Price": pC['price']})
-                for r in [0.618, 1.0, 1.272, 1.618, 2.0]:
-                    levels_data.append({"Level": f"Fib {r}", "Price": pC['price'] + height_AB * r})
-                st.dataframe(pd.DataFrame(levels_data).style.format({"Price": "${:.2f}"}), use_container_width=True)
-
-            if res['option_plan']:
-                with st.expander("⚡ 查看期权建议", expanded=True):
-                    p = res['option_plan']
-                    st.info(f"**{p['name']}**: {p['legs']} | {p['logic']}")
-        else:
-            st.error("数据获取失败。")
+                # 4. 狗蛋 Pro 3 (AI)
+                st.write("---")
+                st.subheader("🧠 召唤 Pro 3 战术指导")
+                if st.button("⚡ 请求 Pro 3 分析"):
+                    with st.spinner("🐶 狗蛋正在连接总部..."):
+                        news_text = "暂无实时新闻" # 简化版，可扩展抓取
+                        curr_trend = "多头" if res['ema_bullish'] else "空头"
+                        report = ask_goudan_pro3(ticker, res['price'], curr_trend, res['rsi'], res['atr'], news_text)
+                        st.markdown(f"<div style='background-color:#1E1E1E;border:1px solid #4285F4;padding:20px;border-radius:10px'>{report}</div>", unsafe_allow_html=True)
+            else:
+                st.error("无法获取数据")
 
 else:
-    st.title("🚀 市场全境扫描 (Hot 50)")
-    tickers_input = st.text_area("监控列表 (Hot 50)", value=", ".join(HOT_STOCKS_LIST), height=120)
-    
+    st.title("🚀 市场全境扫描")
     if st.button("⚡ 开始扫描"):
-        tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
-        progress_bar = st.progress(0)
+        tickers = HOT_STOCKS_LIST
+        progress = st.progress(0)
         results = []
         
-        def scan_one(t):
-            return analyze_ticker_pro(t, interval="1d", lookback="5y", threshold=0.08, trend_order=trend_order)
-
+        def scan_one(t): return analyze_ticker_pro(t, interval="1d", lookback="5y", threshold=0.08, trend_order=trend_order)
+        
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {executor.submit(scan_one, t): t for t in tickers}
-            for i, future in enumerate(futures):
-                r = future.result()
-                if r and ("ABC" in r['signal'] or "突破" in r['signal'] or "跌破" in r['signal']):
-                    results.append(r)
-                progress_bar.progress((i + 1) / len(tickers))
+            for i, f in enumerate(futures):
+                r = f.result()
+                if r and "WAIT" not in r['signal']: results.append(r)
+                progress.progress((i+1)/len(tickers))
         
-        progress_bar.empty()
-        
+        progress.empty()
         if results:
             st.success(f"发现 {len(results)} 个机会")
             for i, r in enumerate(results):
-                with st.expander(f"{r['ticker']} | ${r['price']:.2f} | {r['signal']}", expanded=False):
-                    st.write(f"逻辑: {r['reasons']}")
-                    if "跌破" in r['signal']: st.warning("📉 注意：这是做空信号！")
-                    if "连破" in r['signal']: st.success("🔥🔥 注意：连破多道阻力！")
-                    
-                    if r['abc']:
-                        pA, pB, pC = r['abc']['pivots']
-                        h = pB['price'] - pA['price']
-                        t1 = pC['price'] + h * 1.618
-                        st.code(f"A(止损): ${pA['price']:.2f} | C(支撑): ${pC['price']:.2f} | 目标1.618: ${t1:.2f}")
-                    
-                    fig = plot_chart(r['data'], r, height=400)
-                    st.plotly_chart(fig, use_container_width=True, key=f"chart_{i}", config={'scrollZoom': True})
+                with st.expander(f"{r['ticker']} | {r['signal']}", expanded=False):
+                    st.write(r['reasons'])
+                    st.plotly_chart(plot_chart(r['data'], r, height=400), key=f"chart_{i}")
         else:
-            st.warning("暂无信号")
+            st.warning("无信号")
