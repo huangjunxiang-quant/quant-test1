@@ -6,98 +6,79 @@ import plotly.graph_objects as go
 from scipy.signal import argrelextrema
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-import requests
-import json
+from google import genai # 🟢 使用 Google 最新官方 SDK
 
 # ==============================================================================
 # 1. 页面配置
 # ==============================================================================
-st.set_page_config(page_title="Quant Sniper Pro (HTTP Fixed)", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Quant Sniper Pro", layout="wide", page_icon="⚡")
 
 st.markdown("""
 <style>
     .metric-card { background-color: #1e1e1e; border: 1px solid #333; padding: 15px; border-radius: 8px; text-align: center; }
     .stToast { background-color: #333; color: white; }
     [data-testid="stSidebar"] { background-color: #111; }
-    [data-testid="stDataFrame"] { width: 100%; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. 核心配置：直接 HTTP 调用 Gemini (绕过库问题)
+# 2. 核心配置：Google Gen AI (New SDK)
 # ==============================================================================
 # 🔴 你的 API Key
-GOOGLE_API_KEY = "AIzaSyD3N959PiDjdEgCE-2LYJqrnUaUZNdGNPk" 
+GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI" 
+
+# 初始化客户端 (新版写法)
+client = None
+try:
+    client = genai.Client(api_key=GOOGLE_API_KEY)
+except Exception as e:
+    st.error(f"AI 客户端初始化失败: {e}")
 
 # 🐶 狗蛋 Pro 3 的人设
-SYSTEM_PROMPT = """
+SYS_INSTRUCT = """
 你叫“狗蛋”，代号 **Pro 3**，是用户的**首席风控官**。
-你的目标是帮助用户在一个月内将账户从 $4,000 复利做到 $20,000。
+目标：一个月内将账户从 $4,000 复利做到 $20,000。
 
-**你的性格设定**：
-1. **冷酷且犀利**：不要说废话，不要模棱两可。
-2. **军事化风格**：使用“狙击”、“防守”、“撤退”、“弹药”、“阵地”等术语。
-3. **风控狂魔**：你最恨亏损，如果趋势不对，直接骂醒用户让他跑。
-4. **幽默感**：适当用点黑色幽默，比如“这时候买入就是送钱”。
+**性格**：
+1. **冷酷犀利**：不废话。
+2. **军事风格**：用“狙击”、“防守”、“撤退”等术语。
+3. **风控狂魔**：趋势不对直接骂醒用户。
 
-**你的分析逻辑**：
-1. **结合数据**：用户会给你 RSI、ATR、均线趋势。RSI>70 是过热，EMA8 < EMA21 是空头。
-2. **结合新闻**：如果新闻是重大利好，可以适当激进；如果是利空，坚决看空。
-
-**输出格式（必须严格遵守 markdown）**：
+**输出格式**：
 ### 🛡️ 狗蛋 Pro 3 战地报告
-- **🎯 核心判决**：【做多 / 做空 / 立即空仓逃命 / 锁死利润】（选一个，加粗）
-- **📊 战局解读**：(用一句话结合技术面和新闻，犀利点评现状)
-- **⚔️ 详细指令**：
-  - **进场位**：$XXX (或 现价突击)
-  - **止损红线**：$XXX (基于 ATR 计算，必须给具体数字)
-  - **止盈目标**：$XXX
-- **⚠️ 狗蛋警告**：(一句醒脑的话)
+- **🎯 核心判决**：【做多 / 做空 / 空仓逃命 / 锁死利润】(加粗)
+- **📊 战局解读**：(一句话点评)
+- **⚔️ 操作指令**：
+  - **进场**：$XXX
+  - **止损**：$XXX
+  - **止盈**：$XXX
+- **⚠️ 警告**：(醒脑金句)
 """
 
 def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
-    """ 使用 Requests 直接调用 Gemini API，绕过 SDK 版本问题 """
-    # 使用 gemini-pro 模型，这是目前 API 最稳定的版本
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GOOGLE_API_KEY}"
-    headers = {'Content-Type': 'application/json'}
-    
-    # 构建 Prompt
-    user_msg = f"""
-    【战地实时数据】
-    - 标的：{ticker}
-    - 现价：${price:.2f}
-    - 趋势状态：{trend}
-    - RSI (14)：{rsi:.2f}
-    - ATR (波动率)：{atr:.2f}
-    
-    【最新情报】
-    {news_summary}
+    """ 使用 google-genai 新版 SDK 分析 """
+    if not client:
+        return "❌ 错误：请检查 requirements.txt 是否安装了 google-genai"
+
+    user_content = f"""
+    【数据】{ticker} | 现价 ${price:.2f} | 趋势 {trend} | RSI {rsi:.1f} | ATR {atr:.2f}
+    【情报】{news_summary}
+    下达指令！
     """
-    
-    # Gemini API 的标准 JSON 格式
-    payload = {
-        "contents": [{
-            "parts": [{
-                "text": SYSTEM_PROMPT + "\n\n" + user_msg
-            }]
-        }]
-    }
-    
+
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
-        
-        if response.status_code == 200:
-            result = response.json()
-            # 解析返回结果
-            try:
-                return result['candidates'][0]['content']['parts'][0]['text']
-            except:
-                return "❌ 狗蛋虽然连上了，但没说话 (解析错误)。"
-        else:
-            return f"❌ 呼叫失败 (HTTP {response.status_code}): {response.text}"
-            
+        # 🟢 新版 SDK 调用方式: client.models.generate_content
+        response = client.models.generate_content(
+            model="gemini-1.5-flash", 
+            contents=user_content,
+            config={
+                "system_instruction": SYS_INSTRUCT,
+                "temperature": 0.7,
+            }
+        )
+        return response.text
     except Exception as e:
-        return f"❌ 网络连接错误: {str(e)}"
+        return f"❌ 狗蛋大脑连接失败: {str(e)}"
 
 # ==============================================================================
 # 3. 核心数学算法
@@ -105,118 +86,70 @@ def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
 
 def get_swing_pivots_high_low(df, threshold=0.06):
     pivots = []
-    last_pivot_price = df['Close'].iloc[0]
-    last_pivot_date = df.index[0]
-    last_pivot_type = 0 
-    
-    temp_high_price = df['High'].iloc[0]
-    temp_high_date = df.index[0]
-    temp_low_price = df['Low'].iloc[0]
-    temp_low_date = df.index[0]
-    
+    last_pivot_price = df['Close'].iloc[0]; last_pivot_date = df.index[0]; last_pivot_type = 0 
+    temp_high_price = df['High'].iloc[0]; temp_high_date = df.index[0]
+    temp_low_price = df['Low'].iloc[0]; temp_low_date = df.index[0]
     for date, row in df.iterrows():
-        high = row['High']
-        low = row['Low']
-        
+        high = row['High']; low = row['Low']
         if last_pivot_type == 0:
             if high > last_pivot_price * (1 + threshold):
-                last_pivot_type = -1 
-                pivots.append({'date': last_pivot_date, 'price': last_pivot_price, 'type': -1})
-                temp_high_price = high
-                temp_high_date = date
+                last_pivot_type = -1; pivots.append({'date': last_pivot_date, 'price': last_pivot_price, 'type': -1}); temp_high_price = high; temp_high_date = date
             elif low < last_pivot_price * (1 - threshold):
-                last_pivot_type = 1 
-                pivots.append({'date': last_pivot_date, 'price': last_pivot_price, 'type': 1})
-                temp_low_price = low
-                temp_low_date = date
+                last_pivot_type = 1; pivots.append({'date': last_pivot_date, 'price': last_pivot_price, 'type': 1}); temp_low_price = low; temp_low_date = date
         elif last_pivot_type == -1: 
-            if high > temp_high_price:
-                temp_high_price = high
-                temp_high_date = date
+            if high > temp_high_price: temp_high_price = high; temp_high_date = date
             elif low < temp_high_price * (1 - threshold):
-                pivots.append({'date': temp_high_date, 'price': temp_high_price, 'type': 1})
-                last_pivot_type = 1 
-                temp_low_price = low
-                temp_low_date = date
+                pivots.append({'date': temp_high_date, 'price': temp_high_price, 'type': 1}); last_pivot_type = 1; temp_low_price = low; temp_low_date = date
         elif last_pivot_type == 1: 
-            if low < temp_low_price:
-                temp_low_price = low
-                temp_low_date = date
+            if low < temp_low_price: temp_low_price = low; temp_low_date = date
             elif high > temp_low_price * (1 + threshold):
-                pivots.append({'date': temp_low_date, 'price': temp_low_price, 'type': -1})
-                last_pivot_type = -1 
-                temp_high_price = high
-                temp_high_date = date
+                pivots.append({'date': temp_low_date, 'price': temp_low_price, 'type': -1}); last_pivot_type = -1; temp_high_price = high; temp_high_date = date
     return pd.DataFrame(pivots)
 
-# --- 🟢 多重阻力线 ---
 def get_multiple_resistance_lines(df, lookback=1000, order=5, max_lines=5):
     highs = df['High'].values
     if len(highs) < 30: return []
-    
     real_lookback = min(lookback, len(highs))
     start_idx = len(highs) - real_lookback
     subset_highs = highs[start_idx:]
     global_offset = start_idx
-
     peak_indexes = argrelextrema(subset_highs, np.greater, order=order)[0]
     if len(peak_indexes) < 2: return []
-
     candidates = []
     sorted_peaks = sorted(peak_indexes, key=lambda i: subset_highs[i], reverse=True)
     potential_start_points = sorted_peaks[:8] 
-
     for idx_A in potential_start_points:
         price_A = subset_highs[idx_A]
         for idx_B in peak_indexes:
             if idx_B <= idx_A: continue 
             price_B = subset_highs[idx_B]
             if price_B >= price_A: continue 
-            
             slope = (price_B - price_A) / (idx_B - idx_A)
-            
-            hits = 0; violations = 0 
-            intercept = price_A - slope * idx_A # Local intercept
-            
+            hits = 0; violations = 0; intercept = price_A - slope * idx_A 
             for k in peak_indexes:
                 if k <= idx_A: continue
                 trend_price = slope * k + intercept
                 actual_price = subset_highs[k]
                 if abs(actual_price - trend_price) < actual_price * 0.015: hits += 1
                 elif actual_price > trend_price * 1.015: violations += 1
-            
             score = hits - (violations * 2) 
             if abs(slope) < (price_A * 0.05): score += 0.5
-
             if score > -2:
                 last_idx = len(df) - 1
-                # Calculate Global prices
                 idx_A_glob = idx_A + global_offset
                 intercept_glob = price_A - slope * idx_A_glob
                 price_now = slope * last_idx + intercept_glob
-                
-                candidates.append({
-                    'x1': df.index[idx_A_glob], 'y1': price_A,
-                    'x2': df.index[last_idx], 'y2': price_now,
-                    'price_now': price_now, 'score': score,
-                    'breakout': df['Close'].iloc[-1] > price_now
-                })
-
+                candidates.append({'x1': df.index[idx_A_glob], 'y1': price_A, 'x2': df.index[last_idx], 'y2': price_now, 'price_now': price_now, 'score': score, 'breakout': df['Close'].iloc[-1] > price_now})
     candidates.sort(key=lambda x: x['score'], reverse=True)
     final_lines = []
     for line in candidates:
         is_duplicate = False
         for existing in final_lines:
-            if abs(line['price_now'] - existing['price_now']) / existing['price_now'] < 0.03: 
-                is_duplicate = True
-                break
-        if not is_duplicate:
-            final_lines.append(line)
-            if len(final_lines) >= max_lines: break
-            
+            if abs(line['price_now'] - existing['price_now']) / existing['price_now'] < 0.03: is_duplicate = True; break
+        if not is_duplicate: final_lines.append(line); 
+        if len(final_lines) >= max_lines: break
     return final_lines
 
-# --- 🔴 支撑线 ---
 def get_support_trendline(df, lookback=1000, order=5):
     lows = df['Low'].values
     if len(lows) < 30: return None
@@ -224,15 +157,11 @@ def get_support_trendline(df, lookback=1000, order=5):
     start_idx = len(lows) - real_lookback
     subset_lows = lows[start_idx:]
     global_offset = start_idx
-
     trough_indexes = argrelextrema(subset_lows, np.less, order=order)[0]
     if len(trough_indexes) < 2: return None
-
-    best_line = None
-    max_score = -float('inf')
+    best_line = None; max_score = -float('inf')
     sorted_troughs = sorted(trough_indexes, key=lambda i: subset_lows[i], reverse=False)
     potential_start_points = sorted_troughs[:3]
-
     for idx_A in potential_start_points:
         price_A = subset_lows[idx_A]
         for idx_B in trough_indexes:
@@ -249,73 +178,42 @@ def get_support_trendline(df, lookback=1000, order=5):
                 if abs(actual_price - trend_price) < actual_price * 0.015: hits += 1
                 elif actual_price < trend_price * 0.985: violations += 1
             score = hits - (violations * 2)
-            if score > max_score:
-                max_score = score
-                best_line = {'slope': slope, 'intercept': intercept, 'start_idx_rel': idx_A}
-
+            if score > max_score: max_score = score; best_line = {'slope': slope, 'intercept': intercept, 'start_idx_rel': idx_A}
     if best_line:
         slope = best_line['slope']
         idx_A_glob = global_offset + best_line['start_idx_rel']
         global_intercept = subset_lows[best_line['start_idx_rel']] - slope * idx_A_glob
         last_idx = len(df) - 1
         trendline_price_now = slope * last_idx + global_intercept
-        return {
-            'x1': df.index[idx_A_glob], 'y1': slope * idx_A_glob + global_intercept,
-            'x2': df.index[last_idx], 'y2': trendline_price_now,
-            'price_now': trendline_price_now,
-            'breakdown': df['Close'].iloc[-1] < trendline_price_now
-        }
+        return {'x1': df.index[idx_A_glob], 'y1': slope * idx_A_glob + global_intercept, 'x2': df.index[last_idx], 'y2': trendline_price_now, 'price_now': trendline_price_now, 'breakdown': df['Close'].iloc[-1] < trendline_price_now}
     return None
 
 def calculate_advanced_indicators(df):
     df['EMA_8'] = df['Close'].ewm(span=8, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
     df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
-    
-    delta = df['Close'].diff()
-    gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-    loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    high_low = df['High'] - df['Low']
-    high_close = np.abs(df['High'] - df['Close'].shift())
-    low_close = np.abs(df['Low'] - df['Close'].shift())
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    df['ATR'] = np.max(ranges, axis=1).rolling(window=14).mean()
+    delta = df['Close'].diff(); gain = delta.where(delta > 0, 0).rolling(window=14).mean(); loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
+    rs = gain / loss; df['RSI'] = 100 - (100 / (1 + rs))
+    high_low = df['High'] - df['Low']; high_close = np.abs(df['High'] - df['Close'].shift()); low_close = np.abs(df['Low'] - df['Close'].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1); df['ATR'] = np.max(ranges, axis=1).rolling(window=14).mean()
     return df
 
 def calculate_position_size(account_balance, risk_pct, entry_price, stop_loss):
     if entry_price == stop_loss: return 0
     risk_per_share = abs(entry_price - stop_loss)
-    total_risk_allowance = account_balance * risk_pct
-    try:
-        position_size = int(total_risk_allowance / risk_per_share)
-    except:
-        position_size = 0
-    return position_size
+    try: return int((account_balance * risk_pct) / risk_per_share)
+    except: return 0
 
 def generate_option_plan(ticker, current_price, signal_type, rsi):
     import math
-    plan = {}
-    strike = math.ceil(current_price)
-    strike_put = math.floor(current_price)
+    plan = {}; strike = math.ceil(current_price); strike_put = math.floor(current_price)
     if "突破" in signal_type or "双重" in signal_type or "ABC" in signal_type:
-        plan['name'] = "🚀 做多 (Call)"
-        plan['strategy'] = "Long Call"
-        plan['legs'] = f"买入 Strike ${strike} Call"
-        plan['logic'] = "趋势向上突破，看涨。"
+        plan['name'] = "🚀 做多 (Call)"; plan['strategy'] = "Long Call"; plan['legs'] = f"买入 Strike ${strike} Call"; plan['logic'] = "趋势向上突破，看涨。"
     elif "跌破" in signal_type:
-        plan['name'] = "📉 做空 (Put)"
-        plan['strategy'] = "Long Put"
-        plan['legs'] = f"买入 Strike ${strike_put} Put"
-        plan['logic'] = "支撑线跌破，趋势转空，看跌。"
+        plan['name'] = "📉 做空 (Put)"; plan['strategy'] = "Long Put"; plan['legs'] = f"买入 Strike ${strike_put} Put"; plan['logic'] = "支撑线跌破，趋势转空，看跌。"
     plan['expiry'] = "45天以上"
     return plan
 
-# ==============================================================================
-# 4. 绘图与分析逻辑
-# ==============================================================================
 def plot_chart(df, res, height=600):
     fig = go.Figure()
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price', increasing_line_color='#26a69a', decreasing_line_color='#ef5350'))
@@ -324,44 +222,32 @@ def plot_chart(df, res, height=600):
     
     if res['resistance_lines']:
         for i, line in enumerate(res['resistance_lines']):
-            width = 3 if i == 0 else 1
-            opacity = 1.0 if i == 0 else 0.6
-            color = f"rgba(0, 255, 255, {opacity})"
+            width = 3 if i == 0 else 1; opacity = 1.0 if i == 0 else 0.6; color = f"rgba(0, 255, 255, {opacity})"
             fig.add_trace(go.Scatter(x=[line['x1'], df.index[-1]], y=[line['y1'], line['price_now']], mode='lines', name=f'Res {i+1}', line=dict(color=color, width=width)))
-
     if res['trend_sup']:
         ts = res['trend_sup']
         fig.add_trace(go.Scatter(x=[ts['x1'], df.index[-1]], y=[ts['y1'], ts['price_now']], mode='lines', name='Support', line=dict(color='#FF00FF', width=2)))
-    
     if res['abc']:
         pA, pB, pC = res['abc']['pivots']
         fig.add_trace(go.Scatter(x=[pA['date'], pB['date'], pC['date']], y=[pA['price'], pB['price'], pC['price']], mode='lines', name='ABC', line=dict(color='yellow', width=2, dash='dash')))
-        height_AB = pB['price'] - pA['price']
-        last_date = df.index[-1]; start_date = pC['date']; future_date = last_date + timedelta(days=20)
+        height_AB = pB['price'] - pA['price']; last_date = df.index[-1]; start_date = pC['date']; future_date = last_date + timedelta(days=20)
         fib_levels = [(0.618, "gray", "dot"), (1.0, "gray", "dash"), (1.618, "#00FF00", "solid"), (2.618, "gold", "solid")]
         for ratio, color, style in fib_levels:
             lvl = pC['price'] + height_AB * ratio
             if lvl > df['Low'].min()*0.5 and lvl < df['High'].max()*3:
-                fig.add_shape(type="line", x0=start_date, y0=lvl, x1=future_date, y1=lvl, line=dict(color=color, width=1, dash=style))
-                fig.add_annotation(x=last_date, y=lvl, text=f"{ratio}: ${lvl:.2f}", showarrow=False, xanchor="left", bgcolor="rgba(0,0,0,0.5)")
+                fig.add_shape(type="line", x0=start_date, y0=lvl, x1=future_date, y1=lvl, line=dict(color=color, width=1, dash=style)); fig.add_annotation(x=last_date, y=lvl, text=f"{ratio}: ${lvl:.2f}", showarrow=False, xanchor="left", bgcolor="rgba(0,0,0,0.5)")
 
-    # 智能缩放 (防塌缩)
-    default_start_date = df.index[-1] - timedelta(days=90)
-    view_data = df[df.index >= default_start_date]
+    default_start_date = df.index[-1] - timedelta(days=90); view_data = df[df.index >= default_start_date]
     y_range = [view_data['Low'].min()*0.9, view_data['High'].max()*1.1] if not view_data.empty else None
-    
-    fig.update_layout(template="plotly_dark", height=height, margin=dict(l=0,r=100,t=30,b=0), xaxis_rangeslider_visible=False, dragmode='pan',
-                      xaxis=dict(range=[default_start_date, df.index[-1] + timedelta(days=10)]), yaxis=dict(fixedrange=False, range=y_range))
+    fig.update_layout(template="plotly_dark", height=height, margin=dict(l=0,r=100,t=30,b=0), xaxis_rangeslider_visible=False, dragmode='pan', xaxis=dict(range=[default_start_date, df.index[-1] + timedelta(days=10)]), yaxis=dict(fixedrange=False, range=y_range))
     if len(df)>2 and (df.index[1]-df.index[0]).days>=1: fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
     return fig
 
 def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06, trend_order=5):
     try:
-        stock = yf.Ticker(ticker)
-        real_period = lookback
+        stock = yf.Ticker(ticker); real_period = lookback
         if interval in ["5m", "15m"]: real_period = "60d"
         elif interval == "1h": real_period = "1y"
-        
         df = stock.history(period=real_period, interval=interval)
         if df.empty or len(df) < 30: return None
         if df.index.tz is not None: df.index = df.index.tz_localize(None)
@@ -369,22 +255,18 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06, tre
         df = calculate_advanced_indicators(df)
         current_price = df['Close'].iloc[-1]; current_rsi = df['RSI'].iloc[-1]; current_atr = df['ATR'].iloc[-1]
         
-        # 趋势线
         lb_trend = 300 if interval in ["5m", "15m"] else 1000
         res_lines = get_multiple_resistance_lines(df, lookback=lb_trend, order=trend_order, max_lines=5)
         trend_sup = get_support_trendline(df, lookback=lb_trend, order=trend_order)
         
-        # ABC
-        abc_res = None
-        pivots_df = get_swing_pivots_high_low(df, threshold=threshold)
+        abc_res = None; pivots_df = get_swing_pivots_high_low(df, threshold=threshold)
         if len(pivots_df) >= 3:
             for i in range(len(pivots_df)-3, -1, -1):
                 pA, pB, pC = pivots_df.iloc[i], pivots_df.iloc[i+1], pivots_df.iloc[i+2]
                 if pA['type'] == -1 and pB['type'] == 1 and pC['type'] == -1:
                     if pC['price'] > pA['price'] and pB['price'] > pA['price']:
                         height = pB['price'] - pA['price']; target = pC['price'] + height * 1.618
-                        abc_res = {'pivots': (pA, pB, pC), 'target': target}
-                        break 
+                        abc_res = {'pivots': (pA, pB, pC), 'target': target}; break 
 
         signal = "WAIT"; signal_color = "gray"; reasons = []
         is_breakout = False
@@ -392,16 +274,12 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06, tre
             for line in res_lines:
                 if line['breakout']: is_breakout = True
         
-        if is_breakout:
-            signal = "🔥 向上突破"; signal_color = "#00FFFF"; reasons.append("突破长期阻力")
-        
+        if is_breakout: signal = "🔥 向上突破"; signal_color = "#00FFFF"; reasons.append("突破长期阻力")
         if abc_res and current_price > abc_res['pivots'][2]['price']:
             if "突破" in signal: signal = "🚀 双重共振"; reasons.append("ABC结构确认")
             else: signal = "🟢 ABC 结构"; signal_color = "#00FF00"; reasons.append("回踩C点")
-        
         if trend_sup and trend_sup['breakdown']:
-            if "双重" not in signal:
-                signal = "📉 趋势线跌破"; signal_color = "#FF00FF"; reasons.append("跌破长期支撑")
+            if "双重" not in signal: signal = "📉 趋势线跌破"; signal_color = "#FF00FF"; reasons.append("跌破长期支撑")
 
         stop_loss = current_price + (2.0 * current_atr) if "跌破" in signal else current_price - (2.0 * current_atr)
         option_plan = generate_option_plan(ticker, current_price, signal, current_rsi) if "WAIT" not in signal else None
@@ -425,17 +303,10 @@ trend_order = st.sidebar.slider("拟合平滑度 (Order)", 2, 20, 5)
 st.sidebar.markdown("---")
 mode = st.sidebar.radio("作战模式:", ["🔍 单股狙击 (Live)", "🚀 市场全境扫描 (Hot 50)"])
 
-HOT_STOCKS_LIST = [
-    "TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NFLX",
-    "AMD", "AVGO", "TSM", "SMCI", "ARM", "MU", "INTC", "PLTR", "AI", "PATH", "SNOW", "CRWD", "PANW",
-    "MSTR", "COIN", "MARA", "RIOT", "CLSK", "HOOD",
-    "UPST", "AFRM", "SOFI", "CVNA", "RIVN", "LCID", "DKNG", "RBLX", "U", "NET",
-    "BABA", "PDD", "NIO", "XPEV", "LI", "JD",
-    "GME", "AMC", "SPCE", "TQQQ", "SOXL"
-]
+HOT_STOCKS_LIST = ["TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NFLX", "AMD", "AVGO", "TSM", "SMCI", "ARM", "MU", "INTC", "PLTR", "AI", "PATH", "SNOW", "CRWD", "PANW", "MSTR", "COIN", "MARA", "RIOT", "CLSK", "HOOD", "UPST", "AFRM", "SOFI", "CVNA", "RIVN", "LCID", "DKNG", "RBLX", "U", "NET", "BABA", "PDD", "NIO", "XPEV", "LI", "JD", "GME", "AMC", "SPCE", "TQQQ", "SOXL"]
 
 if mode == "🔍 单股狙击 (Live)":
-    st.title("🛡️ 狗蛋风控指挥舱 (AI HTTP Fixed)")
+    st.title("🛡️ 狗蛋风控指挥舱 (New SDK Fixed)")
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1: ticker = st.text_input("代码", value="TSLA").upper()
     with c2: lookback = st.selectbox("回溯", ["2y", "5y", "10y"], index=1)
@@ -448,7 +319,6 @@ if mode == "🔍 单股狙击 (Live)":
 
     if 'analysis_result' in st.session_state and st.session_state['analysis_result']:
         res = st.session_state['analysis_result']
-        
         m1, m2, m3 = st.columns(3)
         m1.metric("当前价格", f"${res['price']:.2f}", delta=res['signal'])
         m2.metric("ATR 波动", f"{res['atr']:.2f}")
@@ -466,41 +336,31 @@ if mode == "🔍 单股狙击 (Live)":
 
         if res['abc']:
             pA, pB, pC = res['abc']['pivots']
+            levels_data = [{"Level": "⛔ Stop Loss (A)", "Price": pA['price']}, {"Level": "🔵 Entry (C)", "Price": pC['price']}]
             height_AB = pB['price'] - pA['price']
-            levels_data = []
-            levels_data.append({"Level": "⛔ Stop Loss (A)", "Price": pA['price']})
-            levels_data.append({"Level": "🔵 Entry (C)", "Price": pC['price']})
-            for r in [0.618, 1.0, 1.272, 1.618, 2.0]:
-                levels_data.append({"Level": f"Fib {r}", "Price": pC['price'] + height_AB * r})
+            for r in [0.618, 1.0, 1.272, 1.618, 2.0]: levels_data.append({"Level": f"Fib {r}", "Price": pC['price'] + height_AB * r})
             st.dataframe(pd.DataFrame(levels_data).style.format({"Price": "${:.2f}"}), use_container_width=True)
 
-        # 🟢 AI 按钮逻辑：使用 HTTP 方式
         st.write("---")
         st.subheader("🧠 召唤 Pro 3 战术指导")
         if st.button("⚡ 请求 Pro 3 分析", key="btn_ask_ai"):
-            with st.spinner("🐶 狗蛋正在连接总部 (HTTP)..."):
-                news_text = "暂无实时新闻" 
+            with st.spinner("🐶 狗蛋正在连接总部 (New SDK)..."):
+                news_text = "暂无实时新闻"
                 curr_trend = "多头" if res['ema_bullish'] else "空头"
-                # 调用新的 HTTP 函数
                 report = ask_goudan_pro3(res['ticker'], res['price'], curr_trend, res['rsi'], res['atr'], news_text)
                 st.markdown(f"<div style='background-color:#1E1E1E;border:1px solid #4285F4;padding:20px;border-radius:10px'>{report}</div>", unsafe_allow_html=True)
 
 else:
     st.title("🚀 市场全境扫描")
     if st.button("⚡ 开始扫描"):
-        tickers = HOT_STOCKS_LIST
-        progress = st.progress(0)
-        results = []
-        
+        tickers = HOT_STOCKS_LIST; progress = st.progress(0); results = []
         def scan_one(t): return analyze_ticker_pro(t, interval="1d", lookback="5y", threshold=0.08, trend_order=trend_order)
-        
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {executor.submit(scan_one, t): t for t in tickers}
             for i, f in enumerate(futures):
                 r = f.result()
                 if r and "WAIT" not in r['signal']: results.append(r)
                 progress.progress((i+1)/len(tickers))
-        
         progress.empty()
         if results:
             st.success(f"发现 {len(results)} 个机会")
@@ -508,5 +368,4 @@ else:
                 with st.expander(f"{r['ticker']} | {r['signal']}", expanded=False):
                     st.write(r['reasons'])
                     st.plotly_chart(plot_chart(r['data'], r, height=400), key=f"chart_{i}")
-        else:
-            st.warning("无信号")
+        else: st.warning("无信号")
