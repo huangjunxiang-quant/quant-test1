@@ -6,82 +6,92 @@ import plotly.graph_objects as go
 from scipy.signal import argrelextrema
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from google import genai # 🟢 使用 Google 最新官方 SDK
+from google import genai
+from google.genai import types
 
 # ==============================================================================
-# 1. 页面配置
+# 1. Page Configuration
 # ==============================================================================
-st.set_page_config(page_title="Quant Sniper Pro", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Quant Sniper Pro (New SDK)", layout="wide", page_icon="⚡")
 
 st.markdown("""
 <style>
     .metric-card { background-color: #1e1e1e; border: 1px solid #333; padding: 15px; border-radius: 8px; text-align: center; }
     .stToast { background-color: #333; color: white; }
     [data-testid="stSidebar"] { background-color: #111; }
+    [data-testid="stDataFrame"] { width: 100%; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. 核心配置：Google Gen AI (New SDK)
+# 2. Google Gen AI Configuration (New SDK)
 # ==============================================================================
-# 🔴 你的 API Key
-GOOGLE_API_KEY = "AIzaSyD3N959PiDjdEgCE-2LYJqrnUaUZNdGNPk" 
+# 🔴 Your API Key
+GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI" 
 
-# 初始化客户端 (新版写法)
+# Initialize Client
 client = None
 try:
     client = genai.Client(api_key=GOOGLE_API_KEY)
 except Exception as e:
-    st.error(f"AI 客户端初始化失败: {e}")
+    st.error(f"AI Client Error: {e}")
 
-# 🐶 狗蛋 Pro 3 的人设
+# 🐶 Dog Egg Pro 3 Persona
 SYS_INSTRUCT = """
-你叫“狗蛋”，代号 **Pro 3**，是用户的**首席风控官**。
-目标：一个月内将账户从 $4,000 复利做到 $20,000。
+You are "Goudan" (Dog Egg), codename **Pro 3**, the user's **Chief Risk Officer**.
+Goal: Compound the account from $4,000 to $20,000 in one month.
 
-**性格**：
-1. **冷酷犀利**：不废话。
-2. **军事风格**：用“狙击”、“防守”、“撤退”等术语。
-3. **风控狂魔**：趋势不对直接骂醒用户。
+**Personality**:
+1. **Ruthless**: No fluff.
+2. **Military Style**: Use terms like "snipe", "defend", "retreat".
+3. **Risk Maniac**: Scold the user if the trend is bad.
 
-**输出格式**：
-### 🛡️ 狗蛋 Pro 3 战地报告
-- **🎯 核心判决**：【做多 / 做空 / 空仓逃命 / 锁死利润】(加粗)
-- **📊 战局解读**：(一句话点评)
-- **⚔️ 操作指令**：
-  - **进场**：$XXX
-  - **止损**：$XXX
-  - **止盈**：$XXX
-- **⚠️ 警告**：(醒脑金句)
+**Output Format**:
+### 🛡️ Dog Egg Pro 3 Report
+- **🎯 Verdict**: 【Long / Short / Flee / Lock Profit】 (Bold)
+- **📊 Analysis**: (One sentence on tech + news)
+- **⚔️ Orders**:
+  - **Entry**: $XXX
+  - **Stop**: $XXX
+  - **Target**: $XXX
+- **⚠️ Warning**: (Wake up call)
 """
 
 def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
-    """ 使用 google-genai 新版 SDK 分析 """
+    """ Analysis Engine using google-genai SDK """
     if not client:
-        return "❌ 错误：请检查 requirements.txt 是否安装了 google-genai"
+        return "❌ Error: google-genai library not loaded."
 
     user_content = f"""
-    【数据】{ticker} | 现价 ${price:.2f} | 趋势 {trend} | RSI {rsi:.1f} | ATR {atr:.2f}
-    【情报】{news_summary}
-    下达指令！
+    [Real-time Data]
+    - Ticker: {ticker}
+    - Price: ${price:.2f}
+    - Trend: {trend}
+    - RSI: {rsi:.2f}
+    - ATR: {atr:.2f}
+    
+    [News]
+    {news_summary}
+    
+    Give orders!
     """
 
     try:
-        # 🟢 新版 SDK 调用方式: client.models.generate_content
+        # 🔴 Correct call for the new SDK
         response = client.models.generate_content(
-            model="gemini-1.5-flash", 
+            model="gemini-1.5-flash",
             contents=user_content,
-            config={
-                "system_instruction": SYS_INSTRUCT,
-                "temperature": 0.7,
-            }
+            config=types.GenerateContentConfig(
+                system_instruction=SYS_INSTRUCT,
+                temperature=0.7
+            )
         )
         return response.text
     except Exception as e:
-        return f"❌ 狗蛋大脑连接失败: {str(e)}"
+        return f"❌ Connection Failed: {str(e)}"
 
 # ==============================================================================
-# 3. 核心数学算法
+# 3. Core Math Algorithms
 # ==============================================================================
 
 def get_swing_pivots_high_low(df, threshold=0.06):
@@ -208,10 +218,10 @@ def generate_option_plan(ticker, current_price, signal_type, rsi):
     import math
     plan = {}; strike = math.ceil(current_price); strike_put = math.floor(current_price)
     if "突破" in signal_type or "双重" in signal_type or "ABC" in signal_type:
-        plan['name'] = "🚀 做多 (Call)"; plan['strategy'] = "Long Call"; plan['legs'] = f"买入 Strike ${strike} Call"; plan['logic'] = "趋势向上突破，看涨。"
+        plan['name'] = "🚀 Long Call"; plan['strategy'] = "Call"; plan['legs'] = f"Buy Strike ${strike} Call"; plan['logic'] = "Bullish breakout."
     elif "跌破" in signal_type:
-        plan['name'] = "📉 做空 (Put)"; plan['strategy'] = "Long Put"; plan['legs'] = f"买入 Strike ${strike_put} Put"; plan['logic'] = "支撑线跌破，趋势转空，看跌。"
-    plan['expiry'] = "45天以上"
+        plan['name'] = "📉 Long Put"; plan['strategy'] = "Put"; plan['legs'] = f"Buy Strike ${strike_put} Put"; plan['logic'] = "Bearish breakdown."
+    plan['expiry'] = "45+ Days"
     return plan
 
 def plot_chart(df, res, height=600):
@@ -303,10 +313,10 @@ trend_order = st.sidebar.slider("拟合平滑度 (Order)", 2, 20, 5)
 st.sidebar.markdown("---")
 mode = st.sidebar.radio("作战模式:", ["🔍 单股狙击 (Live)", "🚀 市场全境扫描 (Hot 50)"])
 
-HOT_STOCKS_LIST = ["TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NFLX", "AMD", "AVGO", "TSM", "SMCI", "ARM", "MU", "INTC", "PLTR", "AI", "PATH", "SNOW", "CRWD", "PANW", "MSTR", "COIN", "MARA", "RIOT", "CLSK", "HOOD", "UPST", "AFRM", "SOFI", "CVNA", "RIVN", "LCID", "DKNG", "RBLX", "U", "NET", "BABA", "PDD", "NIO", "XPEV", "LI", "JD", "GME", "AMC", "SPCE", "TQQQ", "SOXL"]
+HOT_STOCKS_LIST = ["TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NFLX", "AMD", "AVGO", "MSTR", "COIN", "MARA", "CLSK", "UPST", "AFRM", "SOFI", "GME", "AMC", "TQQQ", "SOXL"]
 
 if mode == "🔍 单股狙击 (Live)":
-    st.title("🛡️ 狗蛋风控指挥舱 (New SDK Fixed)")
+    st.title("🛡️ 狗蛋风控指挥舱 (New SDK)")
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1: ticker = st.text_input("代码", value="TSLA").upper()
     with c2: lookback = st.selectbox("回溯", ["2y", "5y", "10y"], index=1)
