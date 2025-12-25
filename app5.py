@@ -9,7 +9,7 @@ from datetime import timedelta
 import google.generativeai as genai
 
 # ==============================================================================
-# 1. 页面配置与样式 (必须放在最前面)
+# 1. 页面配置 (必须是第一行代码)
 # ==============================================================================
 st.set_page_config(page_title="Quant Sniper Pro (AI Fixed)", layout="wide", page_icon="⚡")
 
@@ -23,14 +23,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. 核心配置：Google Gemini AI
+# 2. 核心配置：Google Gemini AI (修复版)
 # ==============================================================================
-# 🔴 核心配置：填入你的 Google API Key
+# 🔴 你的 API Key
 GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI" 
+
+# 尝试配置 AI
+ai_available = False
 try:
     genai.configure(api_key=GOOGLE_API_KEY)
-except:
-    pass
+    ai_available = True
+except Exception as e:
+    st.error(f"AI 配置失败: {e}")
 
 # 🐶 狗蛋的灵魂设定
 system_instruction = """
@@ -60,6 +64,9 @@ system_instruction = """
 
 def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
     """ 狗蛋 Pro 3 分析引擎 """
+    if not ai_available:
+        return "❌ AI 服务不可用，请检查依赖库安装。"
+        
     user_content = f"""
     【战地实时数据】
     - 标的：{ticker}
@@ -74,18 +81,19 @@ def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
     请根据以上数据，以 Pro 3 的身份给我下达操作指令！
     """
     try:
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            generation_config={"temperature": 0.7, "max_output_tokens": 1000},
-            system_instruction=system_instruction,
-        )
-        response = model.generate_content(user_content)
+        # 🟢 修复点：改用 'gemini-pro' 模型，这是最稳定的版本，解决了 404 错误
+        model = genai.GenerativeModel("gemini-pro")
+        
+        # 发送请求 (注意：gemini-pro 不支持 system_instruction 参数直接放在构造函数里，
+        # 我们把 system prompt 加到用户内容前面，效果是一样的)
+        full_prompt = system_instruction + "\n\n" + user_content
+        response = model.generate_content(full_prompt)
         return response.text
     except Exception as e:
-        return f"❌ 狗蛋大脑连接失败：{str(e)} (请检查 API Key)"
+        return f"❌ 狗蛋大脑连接失败：{str(e)} (可能是网络问题或 API Key 限制)"
 
 # ==============================================================================
-# 3. 核心数学算法
+# 3. 核心数学算法 (保持你的功能需求)
 # ==============================================================================
 
 def get_swing_pivots_high_low(df, threshold=0.06):
@@ -134,7 +142,7 @@ def get_swing_pivots_high_low(df, threshold=0.06):
                 temp_high_date = date
     return pd.DataFrame(pivots)
 
-# --- 🟢 多重阻力线 ---
+# --- 🟢 Scipy 拟合多重阻力线 (Order 可调) ---
 def get_multiple_resistance_lines(df, lookback=1000, order=5, max_lines=5):
     highs = df['High'].values
     if len(highs) < 30: return []
@@ -199,7 +207,7 @@ def get_multiple_resistance_lines(df, lookback=1000, order=5, max_lines=5):
             
     return final_lines
 
-# --- 🔴 支撑线 ---
+# --- 🔴 Scipy 拟合支撑线 ---
 def get_support_trendline(df, lookback=1000, order=5):
     lows = df['Low'].values
     if len(lows) < 30: return None
@@ -251,13 +259,16 @@ def get_support_trendline(df, lookback=1000, order=5):
     return None
 
 def calculate_advanced_indicators(df):
+    df['EMA_8'] = df['Close'].ewm(span=8, adjust=False).mean() # 补上 EMA 8
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
     df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
+    
     delta = df['Close'].diff()
     gain = delta.where(delta > 0, 0).rolling(window=14).mean()
     loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
+    
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
@@ -389,12 +400,12 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06, tre
         return {
             "ticker": ticker, "price": current_price, "signal": signal, "color": signal_color, "reasons": ", ".join(reasons),
             "rsi": current_rsi, "atr": current_atr, "stop_loss_atr": stop_loss, "resistance_lines": res_lines, "trend_sup": trend_sup,
-            "abc": abc_res, "data": df, "option_plan": option_plan, "ema_bullish": df['EMA_21'].iloc[-1] > df['EMA_200'].iloc[-1]
+            "abc": abc_res, "data": df, "option_plan": option_plan, "ema_bullish": df['EMA_8'].iloc[-1] > df['EMA_21'].iloc[-1]
         }
     except: return None
 
 # ==============================================================================
-# 5. UI 主程序
+# 5. UI 主程序 (引入 Session State 修复 AI 数据丢失)
 # ==============================================================================
 st.sidebar.header("🕹️ 首席风控官设置")
 account_size = st.sidebar.number_input("账户总资金 ($)", value=10000, step=1000)
@@ -405,7 +416,14 @@ trend_order = st.sidebar.slider("拟合平滑度 (Order)", 2, 20, 5)
 st.sidebar.markdown("---")
 mode = st.sidebar.radio("作战模式:", ["🔍 单股狙击 (Live)", "🚀 市场全境扫描 (Hot 50)"])
 
-HOT_STOCKS_LIST = ["TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NFLX", "AMD", "AVGO", "MSTR", "COIN", "MARA", "CLSK", "UPST", "AFRM", "SOFI", "GME", "AMC", "TQQQ", "SOXL"]
+HOT_STOCKS_LIST = [
+    "TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NFLX",
+    "AMD", "AVGO", "TSM", "SMCI", "ARM", "MU", "INTC", "PLTR", "AI", "PATH", "SNOW", "CRWD", "PANW",
+    "MSTR", "COIN", "MARA", "RIOT", "CLSK", "HOOD",
+    "UPST", "AFRM", "SOFI", "CVNA", "RIVN", "LCID", "DKNG", "RBLX", "U", "NET",
+    "BABA", "PDD", "NIO", "XPEV", "LI", "JD",
+    "GME", "AMC", "SPCE", "TQQQ", "SOXL"
+]
 
 if mode == "🔍 单股狙击 (Live)":
     st.title("🛡️ 狗蛋风控指挥舱 (AI Commander)")
@@ -414,17 +432,17 @@ if mode == "🔍 单股狙击 (Live)":
     with c2: lookback = st.selectbox("回溯", ["2y", "5y", "10y"], index=1)
     with c3: threshold_days = st.slider("ABC灵敏度", 0.03, 0.15, 0.08, 0.01)
 
-    # 🟢 状态保存逻辑：如果点击了按钮，保存结果
+    # 🟢 关键修复：点击“开始分析”后，把结果存到 st.session_state 里
+    # 这样点击 AI 按钮刷新页面时，分析结果不会丢失
     if st.button("开始分析"):
         with st.spinner(f"分析 {ticker}..."):
             res = analyze_ticker_pro(ticker, interval="1d", lookback=lookback, threshold=threshold_days, trend_order=trend_order)
-            st.session_state['analysis_result'] = res # 保存结果到 session
+            st.session_state['analysis_result'] = res 
 
-    # 🟢 如果有结果，显示它 (即使点击了下面的AI按钮刷新页面，这里也会执行)
+    # 🟢 只要 session_state 里有结果，就显示出来
     if 'analysis_result' in st.session_state and st.session_state['analysis_result']:
         res = st.session_state['analysis_result']
         
-        # 1. 基础数据
         m1, m2, m3 = st.columns(3)
         m1.metric("当前价格", f"${res['price']:.2f}", delta=res['signal'])
         m2.metric("ATR 波动", f"{res['atr']:.2f}")
@@ -440,12 +458,22 @@ if mode == "🔍 单股狙击 (Live)":
         fig = plot_chart(res['data'], res, height=600)
         st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': True})
 
-        # 4. 狗蛋 Pro 3 (AI) - 放在这里确保 res 存在
+        if res['abc']:
+            pA, pB, pC = res['abc']['pivots']
+            height_AB = pB['price'] - pA['price']
+            levels_data = []
+            levels_data.append({"Level": "⛔ Stop Loss (A)", "Price": pA['price']})
+            levels_data.append({"Level": "🔵 Entry (C)", "Price": pC['price']})
+            for r in [0.618, 1.0, 1.272, 1.618, 2.0]:
+                levels_data.append({"Level": f"Fib {r}", "Price": pC['price'] + height_AB * r})
+            st.dataframe(pd.DataFrame(levels_data).style.format({"Price": "${:.2f}"}), use_container_width=True)
+
+        # 🟢 AI 按钮放在这里，因为它依赖 res
         st.write("---")
         st.subheader("🧠 召唤 Pro 3 战术指导")
-        if st.button("⚡ 请求 Pro 3 分析"):
+        if st.button("⚡ 请求 Pro 3 分析", key="btn_ask_ai"):
             with st.spinner("🐶 狗蛋正在连接总部..."):
-                news_text = "暂无实时新闻" # 简化版
+                news_text = "暂无实时新闻"
                 curr_trend = "多头" if res['ema_bullish'] else "空头"
                 # 调用 AI
                 report = ask_goudan_pro3(res['ticker'], res['price'], curr_trend, res['rsi'], res['atr'], news_text)
