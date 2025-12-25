@@ -6,12 +6,13 @@ import plotly.graph_objects as go
 from scipy.signal import argrelextrema
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-import google as genai
+import requests
+import json
 
 # ==============================================================================
-# 1. 页面配置 (必须是第一行)
+# 1. 页面配置
 # ==============================================================================
-st.set_page_config(page_title="Quant Sniper Pro (AI Fixed)", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Quant Sniper Pro (HTTP Fixed)", layout="wide", page_icon="⚡")
 
 st.markdown("""
 <style>
@@ -23,23 +24,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. 核心配置：Google Gemini AI (修复版)
+# 2. 核心配置：直接 HTTP 调用 Gemini (绕过库问题)
 # ==============================================================================
-# 🔴 你的 API Key (已内置)
+# 🔴 你的 API Key
 GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI" 
 
-# 尝试配置 AI
-ai_available = False
-try:
-    genai.configure(api_key=GOOGLE_API_KEY)
-    ai_available = True
-except Exception as e:
-    st.error(f"AI 配置失败: {e}")
-
-# 🐶 狗蛋的灵魂设定
-system_instruction = """
+# 🐶 狗蛋 Pro 3 的人设
+SYSTEM_PROMPT = """
 你叫“狗蛋”，代号 **Pro 3**，是用户的**首席风控官**。
-用户的目标是在一个月内将账户从 $4,000 复利做到 $20,000，这需要极强的纪律和“土匪战术”。
+你的目标是帮助用户在一个月内将账户从 $4,000 复利做到 $20,000。
 
 **你的性格设定**：
 1. **冷酷且犀利**：不要说废话，不要模棱两可。
@@ -63,11 +56,13 @@ system_instruction = """
 """
 
 def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
-    """ 狗蛋 Pro 3 分析引擎 """
-    if not ai_available:
-        return "❌ AI 服务不可用，请检查依赖库安装。"
-        
-    user_content = f"""
+    """ 使用 Requests 直接调用 Gemini API，绕过 SDK 版本问题 """
+    # 使用 gemini-pro 模型，这是目前 API 最稳定的版本
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GOOGLE_API_KEY}"
+    headers = {'Content-Type': 'application/json'}
+    
+    # 构建 Prompt
+    user_msg = f"""
     【战地实时数据】
     - 标的：{ticker}
     - 现价：${price:.2f}
@@ -75,21 +70,34 @@ def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
     - RSI (14)：{rsi:.2f}
     - ATR (波动率)：{atr:.2f}
     
-    【最新情报 (News)】
+    【最新情报】
     {news_summary}
-    
-    请根据以上数据，以 Pro 3 的身份给我下达操作指令！
     """
+    
+    # Gemini API 的标准 JSON 格式
+    payload = {
+        "contents": [{
+            "parts": [{
+                "text": SYSTEM_PROMPT + "\n\n" + user_msg
+            }]
+        }]
+    }
+    
     try:
-        # 🟢 修复点：改用 'gemini-pro' 模型，解决 404 错误
-        model = genai.GenerativeModel("gemini-pro")
+        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
         
-        # 发送请求 (gemini-pro 把 system prompt 加到用户内容前面最稳妥)
-        full_prompt = system_instruction + "\n\n" + user_content
-        response = model.generate_content(full_prompt)
-        return response.text
+        if response.status_code == 200:
+            result = response.json()
+            # 解析返回结果
+            try:
+                return result['candidates'][0]['content']['parts'][0]['text']
+            except:
+                return "❌ 狗蛋虽然连上了，但没说话 (解析错误)。"
+        else:
+            return f"❌ 呼叫失败 (HTTP {response.status_code}): {response.text}"
+            
     except Exception as e:
-        return f"❌ 狗蛋大脑连接失败：{str(e)} (可能是模型版本不兼容，已切换至 gemini-pro)"
+        return f"❌ 网络连接错误: {str(e)}"
 
 # ==============================================================================
 # 3. 核心数学算法
@@ -166,8 +174,9 @@ def get_multiple_resistance_lines(df, lookback=1000, order=5, max_lines=5):
             if price_B >= price_A: continue 
             
             slope = (price_B - price_A) / (idx_B - idx_A)
-            intercept = price_A - slope * idx_A
+            
             hits = 0; violations = 0 
+            intercept = price_A - slope * idx_A # Local intercept
             
             for k in peak_indexes:
                 if k <= idx_A: continue
@@ -181,6 +190,7 @@ def get_multiple_resistance_lines(df, lookback=1000, order=5, max_lines=5):
 
             if score > -2:
                 last_idx = len(df) - 1
+                # Calculate Global prices
                 idx_A_glob = idx_A + global_offset
                 intercept_glob = price_A - slope * idx_A_glob
                 price_now = slope * last_idx + intercept_glob
@@ -258,7 +268,7 @@ def get_support_trendline(df, lookback=1000, order=5):
     return None
 
 def calculate_advanced_indicators(df):
-    df['EMA_8'] = df['Close'].ewm(span=8, adjust=False).mean() # 补上 EMA 8
+    df['EMA_8'] = df['Close'].ewm(span=8, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
     df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
@@ -335,7 +345,7 @@ def plot_chart(df, res, height=600):
                 fig.add_shape(type="line", x0=start_date, y0=lvl, x1=future_date, y1=lvl, line=dict(color=color, width=1, dash=style))
                 fig.add_annotation(x=last_date, y=lvl, text=f"{ratio}: ${lvl:.2f}", showarrow=False, xanchor="left", bgcolor="rgba(0,0,0,0.5)")
 
-    # 智能缩放 (防塌缩)
+    # 智能缩放
     default_start_date = df.index[-1] - timedelta(days=90)
     view_data = df[df.index >= default_start_date]
     y_range = [view_data['Low'].min()*0.9, view_data['High'].max()*1.1] if not view_data.empty else None
@@ -385,6 +395,7 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06, tre
         if is_breakout:
             signal = "🔥 向上突破"; signal_color = "#00FFFF"; reasons.append("突破长期阻力")
         
+        # 🟢 修复这里的断行错误
         if abc_res and current_price > abc_res['pivots'][2]['price']:
             if "突破" in signal: signal = "🚀 双重共振"; reasons.append("ABC结构确认")
             else: signal = "🟢 ABC 结构"; signal_color = "#00FF00"; reasons.append("回踩C点")
@@ -404,7 +415,7 @@ def analyze_ticker_pro(ticker, interval="1d", lookback="5y", threshold=0.06, tre
     except: return None
 
 # ==============================================================================
-# 5. UI 主程序 (引入 Session State 修复 AI 数据丢失)
+# 5. UI 主程序
 # ==============================================================================
 st.sidebar.header("🕹️ 首席风控官设置")
 account_size = st.sidebar.number_input("账户总资金 ($)", value=10000, step=1000)
@@ -425,24 +436,20 @@ HOT_STOCKS_LIST = [
 ]
 
 if mode == "🔍 单股狙击 (Live)":
-    st.title("🛡️ 狗蛋风控指挥舱 (AI Commander)")
+    st.title("🛡️ 狗蛋风控指挥舱 (AI HTTP Fixed)")
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1: ticker = st.text_input("代码", value="TSLA").upper()
     with c2: lookback = st.selectbox("回溯", ["2y", "5y", "10y"], index=1)
     with c3: threshold_days = st.slider("ABC灵敏度", 0.03, 0.15, 0.08, 0.01)
 
-    # 🟢 关键修复：点击“开始分析”后，把结果存到 st.session_state 里
-    # 这样点击 AI 按钮刷新页面时，分析结果不会丢失
     if st.button("开始分析"):
         with st.spinner(f"分析 {ticker}..."):
             res = analyze_ticker_pro(ticker, interval="1d", lookback=lookback, threshold=threshold_days, trend_order=trend_order)
             st.session_state['analysis_result'] = res 
 
-    # 🟢 只要 session_state 里有结果，就显示出来 (即使点击了下面的AI按钮刷新页面，这里也会执行)
     if 'analysis_result' in st.session_state and st.session_state['analysis_result']:
         res = st.session_state['analysis_result']
         
-        # 1. 基础数据
         m1, m2, m3 = st.columns(3)
         m1.metric("当前价格", f"${res['price']:.2f}", delta=res['signal'])
         m2.metric("ATR 波动", f"{res['atr']:.2f}")
@@ -468,14 +475,14 @@ if mode == "🔍 单股狙击 (Live)":
                 levels_data.append({"Level": f"Fib {r}", "Price": pC['price'] + height_AB * r})
             st.dataframe(pd.DataFrame(levels_data).style.format({"Price": "${:.2f}"}), use_container_width=True)
 
-        # 🟢 AI 按钮放在这里，因为它依赖 res
+        # 🟢 AI 按钮逻辑：使用 HTTP 方式
         st.write("---")
         st.subheader("🧠 召唤 Pro 3 战术指导")
         if st.button("⚡ 请求 Pro 3 分析", key="btn_ask_ai"):
-            with st.spinner("🐶 狗蛋正在连接总部..."):
-                news_text = "暂无实时新闻" # 简化版，可扩展抓取
+            with st.spinner("🐶 狗蛋正在连接总部 (HTTP)..."):
+                news_text = "暂无实时新闻" 
                 curr_trend = "多头" if res['ema_bullish'] else "空头"
-                # 调用 AI
+                # 调用新的 HTTP 函数
                 report = ask_goudan_pro3(res['ticker'], res['price'], curr_trend, res['rsi'], res['atr'], news_text)
                 st.markdown(f"<div style='background-color:#1E1E1E;border:1px solid #4285F4;padding:20px;border-radius:10px'>{report}</div>", unsafe_allow_html=True)
 
