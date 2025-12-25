@@ -27,7 +27,7 @@ st.markdown("""
 # 2. Google Gen AI Configuration (New SDK)
 # ==============================================================================
 # 🔴 Your API Key
-GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI" 
+GOOGLE_API_KEY = "AIzaSyD3N959PiDjdEgCE-2LYJqrnUaUZNdGNPk" 
 
 # Initialize Client
 client = None
