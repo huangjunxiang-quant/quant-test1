@@ -25,7 +25,7 @@ st.markdown("""
 # 2. 核心配置：Google Gen AI (New SDK)
 # ==============================================================================
 # 🔴 你的 API Key
-GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI" 
+GOOGLE_API_KEY = "AIzaSyD3N959PiDjdEgCE-2LYJqrnUaUZNdGNPk" 
 
 # 初始化客户端 (新版写法)
 client = None
