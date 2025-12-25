@@ -10,35 +10,54 @@ from google import genai
 from google.genai import types
 
 # ==============================================================================
-# 1. 页面配置 & 样式美化
+# 1. 页面配置 & 战地终端样式 (修复显示不全问题)
 # ==============================================================================
-st.set_page_config(page_title="Quant Sniper Pro (Final)", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Quant Sniper Pro (Final UI)", layout="wide", page_icon="⚡")
 
 st.markdown("""
 <style>
+    /* 基础卡片样式 */
     .metric-card { background-color: #1e1e1e; border: 1px solid #333; padding: 15px; border-radius: 8px; text-align: center; }
     .stToast { background-color: #333; color: white; }
     [data-testid="stSidebar"] { background-color: #111; }
     [data-testid="stDataFrame"] { width: 100%; }
     
-    /* 狗蛋 AI 战地终端样式 */
+    /* 🐶 狗蛋战地终端 - 修复版 */
     .goudan-terminal {
-        background-color: #0d1117;
-        border: 2px solid #00ff41; /* 黑客绿边框 */
+        background-color: #0d1117;          /* 黑客黑底 */
+        border: 2px solid #00ff41;          /* 荧光绿边框 */
         border-radius: 10px;
-        padding: 20px;
+        padding: 25px;                      /* 增加内边距 */
         font-family: 'Courier New', Courier, monospace;
-        color: #c9d1d9;
-        box-shadow: 0 0 15px rgba(0, 255, 65, 0.2);
+        color: #c9d1d9;                     /* 灰白字体，不刺眼 */
+        box-shadow: 0 0 20px rgba(0, 255, 65, 0.15);
         margin-top: 20px;
+        margin-bottom: 50px;                /* 底部留白，防止被切 */
+        line-height: 1.6;                   /* 增加行高，更易读 */
+        font-size: 16px;                    /* 字号加大 */
+        overflow-y: auto;                   /* 内容过长自动滚动 */
+        max-height: 800px;                  /* 最大高度限制 */
     }
+    
+    /* 终端标题 */
     .goudan-header {
-        border-bottom: 1px dashed #00ff41;
-        padding-bottom: 10px;
-        margin-bottom: 15px;
+        border-bottom: 2px dashed #00ff41;
+        padding-bottom: 15px;
+        margin-bottom: 20px;
         font-weight: bold;
         color: #00ff41;
-        font-size: 1.2em;
+        font-size: 1.4em;
+        letter-spacing: 1px;
+    }
+
+    /* 重点高亮 */
+    .goudan-highlight {
+        color: #ff5f5f; /* 警示红 */
+        font-weight: bold;
+    }
+    .goudan-success {
+        color: #00ff41; /* 成功绿 */
+        font-weight: bold;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -46,7 +65,7 @@ st.markdown("""
 # ==============================================================================
 # 2. 核心配置：Google Gen AI (最新官方 SDK)
 # ==============================================================================
-# 🔴 你的 API Key (保持你刚才填的)
+# 🔴 你的 API Key
 GOOGLE_API_KEY = "AIzaSyD3N959PiDjdEgCE-2LYJqrnUaUZNdGNPk" 
 
 # 初始化客户端
@@ -56,9 +75,10 @@ try:
 except Exception as e:
     st.error(f"AI 客户端初始化失败: {e}")
 
-# 🐶 狗蛋 Pro 3 的人设 (无需变动)
+# 🐶 狗蛋 Pro 3 的人设
 SYS_INSTRUCT = """
 你叫“狗蛋”，代号 **Pro 3**，是用户的**首席风控官**。
+用户的目标是在一个月内将账户从 $4,000 复利做到 $20,000。
 
 **你的性格**：
 1. **冷酷犀利**：不要说废话。
@@ -67,7 +87,7 @@ SYS_INSTRUCT = """
 
 **输出格式 (Markdown)**：
 - **🎯 核心判决**：【做多 / 做空 / 空仓逃命 / 锁死利润】(加粗)
-- **📊 战局解读**：(一句话点评技术面+新闻详细分析）
+- **📊 战局解读**：(一句话点评技术面+新闻)
 - **⚔️ 操作指令**：
   - **进场**：$XXX
   - **止损**：$XXX
@@ -103,7 +123,7 @@ def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
             config=types.GenerateContentConfig(
                 system_instruction=SYS_INSTRUCT,
                 temperature=0.7,
-                max_output_tokens=1024
+                max_output_tokens=2048 # 🟢 加大输出长度限制，防止截断
             )
         )
         return response.text
@@ -337,7 +357,7 @@ mode = st.sidebar.radio("作战模式:", ["🔍 单股狙击 (Live)", "🚀 市�
 HOT_STOCKS_LIST = ["TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NFLX", "AMD", "AVGO", "MSTR", "COIN", "MARA", "CLSK", "UPST", "AFRM", "SOFI", "GME", "AMC", "TQQQ", "SOXL"]
 
 if mode == "🔍 单股狙击 (Live)":
-    st.title("🛡️ 狗蛋风控指挥舱 (New SDK)")
+    st.title("🛡️ 狗蛋风控指挥舱 (Final UI)")
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1: ticker = st.text_input("代码", value="TSLA").upper()
     with c2: lookback = st.selectbox("回溯", ["2y", "5y", "10y"], index=1)
@@ -380,7 +400,7 @@ if mode == "🔍 单股狙击 (Live)":
                 curr_trend = "多头" if res['ema_bullish'] else "空头"
                 report = ask_goudan_pro3(res['ticker'], res['price'], curr_trend, res['rsi'], res['atr'], news_text)
                 
-                # 🟢 修复：美化 AI 输出 (战地终端风格)
+                # 🟢 修复：美化 AI 输出 (战地终端风格 + 滚动条 + 完整显示)
                 st.markdown(f"""
                 <div class="goudan-terminal">
                     <div class="goudan-header">🚀 狗蛋 Pro 3 战地报告 (Live)</div>
@@ -391,12 +411,11 @@ if mode == "🔍 单股狙击 (Live)":
 else:
     st.title("🚀 市场全境扫描")
     
-    # 🟢 修复：找回扫描列表输入框
+    # 🟢 找回扫描列表输入框
     st.info("💡 提示：你可以自由编辑下方的监控列表 (用逗号分隔)")
     tickers_input = st.text_area("监控列表 (Hot 50)", value=", ".join(HOT_STOCKS_LIST), height=120)
     
     if st.button("⚡ 开始扫描"):
-        # 从输入框读取，而不是死板的列表
         tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
         
         progress = st.progress(0); results = []
