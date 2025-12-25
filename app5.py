@@ -79,7 +79,7 @@ def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
     try:
         # 🔴 Correct call for the new SDK
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             contents=user_content,
             config=types.GenerateContentConfig(
                 system_instruction=SYS_INSTRUCT,
