@@ -27,7 +27,7 @@ st.markdown("""
 # 2. 核心配置：直接 HTTP 调用 Gemini (绕过库问题)
 # ==============================================================================
 # 🔴 你的 API Key
-GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI" 
+GOOGLE_API_KEY = "AIzaSyD3N959PiDjdEgCE-2LYJqrnUaUZNdGNPk" 
 
 # 🐶 狗蛋 Pro 3 的人设
 SYSTEM_PROMPT = """
