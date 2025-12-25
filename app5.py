@@ -10,9 +10,9 @@ from google import genai
 from google.genai import types
 
 # ==============================================================================
-# 1. Page Configuration
+# 1. 页面配置 & 样式美化
 # ==============================================================================
-st.set_page_config(page_title="Quant Sniper Pro (New SDK)", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Quant Sniper Pro (Final)", layout="wide", page_icon="⚡")
 
 st.markdown("""
 <style>
@@ -20,89 +20,99 @@ st.markdown("""
     .stToast { background-color: #333; color: white; }
     [data-testid="stSidebar"] { background-color: #111; }
     [data-testid="stDataFrame"] { width: 100%; }
+    
+    /* 狗蛋 AI 战地终端样式 */
+    .goudan-terminal {
+        background-color: #0d1117;
+        border: 2px solid #00ff41; /* 黑客绿边框 */
+        border-radius: 10px;
+        padding: 20px;
+        font-family: 'Courier New', Courier, monospace;
+        color: #c9d1d9;
+        box-shadow: 0 0 15px rgba(0, 255, 65, 0.2);
+        margin-top: 20px;
+    }
+    .goudan-header {
+        border-bottom: 1px dashed #00ff41;
+        padding-bottom: 10px;
+        margin-bottom: 15px;
+        font-weight: bold;
+        color: #00ff41;
+        font-size: 1.2em;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. Google Gen AI Configuration (New SDK)
+# 2. 核心配置：Google Gen AI (最新官方 SDK)
 # ==============================================================================
-# 🔴 Your API Key
+# 🔴 你的 API Key (保持你刚才填的)
 GOOGLE_API_KEY = "AIzaSyD3N959PiDjdEgCE-2LYJqrnUaUZNdGNPk" 
 
-# Initialize Client
+# 初始化客户端
 client = None
 try:
     client = genai.Client(api_key=GOOGLE_API_KEY)
 except Exception as e:
-    st.error(f"AI Client Error: {e}")
+    st.error(f"AI 客户端初始化失败: {e}")
 
-# 🐶 狗蛋的灵魂设定 (2026 猎杀版)
+# 🐶 狗蛋 Pro 3 的人设 (无需变动)
 SYS_INSTRUCT = """
 你叫“狗蛋”，代号 **Pro 3**，是用户的**首席风控官**。
-**当前状态**：战场极其残酷，任何犹豫都会导致任务失败。
+用户的目标是在一个月内将账户从 $4,000 复利做到 $20,000。
 
-**你的核心性格 (Persona)**：
-1.  **土匪教官**：我们是来抢钱的，不是来价值投资的。赚了就跑，绝不恋战。
-2.  **绝对冷酷**：不要说“可能”、“也许”。给出明确的【做多】或【空仓】指令。
-3.  **风控狂魔**：你最恨亏损。如果趋势不对，或者盈亏比不划算，直接骂醒用户让他【空仓保命】。
-4.  **军事化口吻**：使用“狙击”、“防守”、“撤退”、“弹药”、“阵地”、“绞肉机”等术语。
+**你的性格**：
+1. **冷酷犀利**：不要说废话。
+2. **军事风格**：使用“狙击”、“防守”、“撤退”等术语。
+3. **风控狂魔**：趋势不对直接骂醒用户。
 
-**你的分析逻辑 (Logic)**：
-1.  **结合数据**：
-    -   **RSI > 70**：除非新闻极好（逼空），否则视为【极度危险/诱多】。
-    -   **趋势 (EMA)**：如果是空头排列 (EMA8 < EMA21)，禁止做多，除非是抢反弹（必须注明是“刀口舔血”）。
-    -   **ATR**：利用 ATR 计算具体的止损位（通常是 1.5倍 ATR）。
-2.  **结合情报**：
-    -   如果新闻是【重大利好】(如收购、业绩炸裂)，无视部分超买指标，果断追击。
-    -   如果新闻是【利空】(如减持、调查)，哪怕技术面再好，也必须【立即撤退】。
-
-**输出格式 (必须严格遵守 Markdown)**：
-
-### 🛡️ 狗蛋 Pro 3 战地报告
-- **🎯 核心判决**：**【全仓突击 / 锁死利润 / 空仓逃命 / 观望待变】** (选一个最精准的)
-- **📊 战局解读**：(用一两句话，毒舌且犀利地分析当前局势。例如：“RSI已经炸了，这时候买入就是给主力送年终奖。”)
-- **⚔️ 猎杀指令**：
-  - **🔫 进场位**：$XXX (或 现价 / 回踩 $XXX)
-  - **🛑 止损红线**：$XXX (必须给具体数字，破位即斩)
-  - **💰 止盈目标**：$XXX (第一目标位)
-- **⚠️ 狗蛋警告**：(一句醒脑的金句，提醒用户不要上头)
+**输出格式 (Markdown)**：
+- **🎯 核心判决**：【做多 / 做空 / 空仓逃命 / 锁死利润】(加粗)
+- **📊 战局解读**：(一句话点评技术面+新闻)
+- **⚔️ 操作指令**：
+  - **进场**：$XXX
+  - **止损**：$XXX
+  - **止盈**：$XXX
+- **⚠️ 警告**：(醒脑金句)
 """
 
 def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
-    """ Analysis Engine using google-genai SDK """
+    """ 【狗蛋 Pro 3 分析引擎 - New SDK 版】 """
     if not client:
-        return "❌ Error: google-genai library not loaded."
+        return "❌ 错误：请检查 requirements.txt 是否安装了 google-genai"
 
+    # 用户的实时战况
     user_content = f"""
-    [Real-time Data]
-    - Ticker: {ticker}
-    - Price: ${price:.2f}
-    - Trend: {trend}
-    - RSI: {rsi:.2f}
-    - ATR: {atr:.2f}
+    【战地实时数据】
+    - 标的：{ticker}
+    - 现价：${price:.2f}
+    - 趋势：{trend}
+    - RSI：{rsi:.2f}
+    - ATR：{atr:.2f}
     
-    [News]
+    【情报】
     {news_summary}
     
-    Give orders!
+    下达指令！
     """
 
     try:
-        # 🔴 Correct call for the new SDK
+        # 🟢 新版 SDK 调用方式
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-1.5-flash", 
             contents=user_content,
             config=types.GenerateContentConfig(
                 system_instruction=SYS_INSTRUCT,
-                temperature=0.7
+                temperature=0.7,
+                max_output_tokens=1024
             )
         )
         return response.text
     except Exception as e:
-        return f"❌ Connection Failed: {str(e)}"
+        return f"❌ 狗蛋大脑连接失败：{str(e)}"
 
 # ==============================================================================
-# 3. Core Math Algorithms
+# 3. 核心数学算法 (保持不变)
 # ==============================================================================
 
 def get_swing_pivots_high_low(df, threshold=0.06):
@@ -324,6 +334,7 @@ trend_order = st.sidebar.slider("拟合平滑度 (Order)", 2, 20, 5)
 st.sidebar.markdown("---")
 mode = st.sidebar.radio("作战模式:", ["🔍 单股狙击 (Live)", "🚀 市场全境扫描 (Hot 50)"])
 
+# 默认 Hot 50 列表 (可编辑)
 HOT_STOCKS_LIST = ["TSLA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NFLX", "AMD", "AVGO", "MSTR", "COIN", "MARA", "CLSK", "UPST", "AFRM", "SOFI", "GME", "AMC", "TQQQ", "SOXL"]
 
 if mode == "🔍 单股狙击 (Live)":
@@ -369,13 +380,29 @@ if mode == "🔍 单股狙击 (Live)":
                 news_text = "暂无实时新闻"
                 curr_trend = "多头" if res['ema_bullish'] else "空头"
                 report = ask_goudan_pro3(res['ticker'], res['price'], curr_trend, res['rsi'], res['atr'], news_text)
-                st.markdown(f"<div style='background-color:#1E1E1E;border:1px solid #4285F4;padding:20px;border-radius:10px'>{report}</div>", unsafe_allow_html=True)
+                
+                # 🟢 修复：美化 AI 输出 (战地终端风格)
+                st.markdown(f"""
+                <div class="goudan-terminal">
+                    <div class="goudan-header">🚀 狗蛋 Pro 3 战地报告 (Live)</div>
+                    {report}
+                </div>
+                """, unsafe_allow_html=True)
 
 else:
     st.title("🚀 市场全境扫描")
+    
+    # 🟢 修复：找回扫描列表输入框
+    st.info("💡 提示：你可以自由编辑下方的监控列表 (用逗号分隔)")
+    tickers_input = st.text_area("监控列表 (Hot 50)", value=", ".join(HOT_STOCKS_LIST), height=120)
+    
     if st.button("⚡ 开始扫描"):
-        tickers = HOT_STOCKS_LIST; progress = st.progress(0); results = []
+        # 从输入框读取，而不是死板的列表
+        tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+        
+        progress = st.progress(0); results = []
         def scan_one(t): return analyze_ticker_pro(t, interval="1d", lookback="5y", threshold=0.08, trend_order=trend_order)
+        
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {executor.submit(scan_one, t): t for t in tickers}
             for i, f in enumerate(futures):
@@ -383,10 +410,11 @@ else:
                 if r and "WAIT" not in r['signal']: results.append(r)
                 progress.progress((i+1)/len(tickers))
         progress.empty()
+        
         if results:
-            st.success(f"发现 {len(results)} 个机会")
+            st.success(f"发现 {len(results)} 个战机！")
             for i, r in enumerate(results):
                 with st.expander(f"{r['ticker']} | {r['signal']}", expanded=False):
                     st.write(r['reasons'])
                     st.plotly_chart(plot_chart(r['data'], r, height=400), key=f"chart_{i}")
-        else: st.warning("无信号")
+        else: st.warning("全境扫描完毕，暂无明确信号。")
