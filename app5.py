@@ -9,7 +9,7 @@ from datetime import timedelta
 import google.generativeai as genai
 
 # ==============================================================================
-# 1. 页面配置与样式 (UI Configuration)
+# 1. 页面配置与样式
 # ==============================================================================
 st.set_page_config(page_title="Quant Sniper Pro (AI Commander)", layout="wide", page_icon="⚡")
 
@@ -25,12 +25,17 @@ st.markdown("""
 # ==============================================================================
 # 2. 核心配置：Google Gemini AI (狗蛋 Pro 3)
 # ==============================================================================
-# 🔴 请确保你的 API Key 是有效的
+# 🔴 请确保你的 API Key 是有效的，否则 AI 功能无法使用
 GOOGLE_API_KEY = "AIzaSyBDCxdpLBGCVGqYwD-w462kmErHqZH5kXI"  # 👈 填入你的 Key
+
+# 尝试配置 AI，如果失败不影响主程序运行
+ai_available = False
 try:
-    genai.configure(api_key=GOOGLE_API_KEY)
+    if GOOGLE_API_KEY:
+        genai.configure(api_key=GOOGLE_API_KEY)
+        ai_available = True
 except:
-    pass # 防止初始化报错卡死界面
+    pass
 
 # 🐶 狗蛋的灵魂设定
 system_instruction = """
@@ -60,6 +65,9 @@ system_instruction = """
 
 def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
     """ 狗蛋 Pro 3 分析引擎 """
+    if not ai_available:
+        return "❌ AI 未连接：请检查 API Key 或网络连接。"
+        
     user_content = f"""
     【战地实时数据】
     - 标的：{ticker}
@@ -82,7 +90,7 @@ def ask_goudan_pro3(ticker, price, trend, rsi, atr, news_summary):
         response = model.generate_content(user_content)
         return response.text
     except Exception as e:
-        return f"❌ 狗蛋大脑连接失败：{str(e)} (请检查 API Key)"
+        return f"❌ 狗蛋大脑连接失败：{str(e)}"
 
 # ==============================================================================
 # 3. 核心数学算法 (ZigZag + Scipy拟合 + 视图控制)
@@ -255,20 +263,31 @@ def get_support_trendline(df, lookback=1000, order=5):
 def calculate_advanced_indicators(df):
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
     df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
-    df['RSI'] = 100 - (100 / (1 + (df['Close'].diff().where(lambda x: x>0, 0).rolling(14).mean() / df['Close'].diff().where(lambda x: x<0, 0).abs().rolling(14).mean())))
+    
+    # RSI 计算
+    delta = df['Close'].diff()
+    gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
+    # ATR 计算
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
     df['ATR'] = np.max(ranges, axis=1).rolling(window=14).mean()
+    
     return df
 
 def calculate_position_size(account_balance, risk_pct, entry_price, stop_loss):
     if entry_price == stop_loss: return 0
     risk_per_share = abs(entry_price - stop_loss)
     total_risk_allowance = account_balance * risk_pct
-    try: position_size = int(total_risk_allowance / risk_per_share)
-    except: position_size = 0
+    try:
+        position_size = int(total_risk_allowance / risk_per_share)
+    except:
+        position_size = 0
     return position_size
 
 def generate_option_plan(ticker, current_price, signal_type, rsi):
@@ -424,7 +443,9 @@ if mode == "🔍 单股狙击 (Live)":
                 # 4. 狗蛋 Pro 3 (AI)
                 st.write("---")
                 st.subheader("🧠 召唤 Pro 3 战术指导")
-                if st.button("⚡ 请求 Pro 3 分析"):
+                
+                # 创建一个唯一的key，防止重绘问题
+                if st.button("⚡ 请求 Pro 3 分析", key="btn_ask_ai"):
                     with st.spinner("🐶 狗蛋正在连接总部..."):
                         news_text = "暂无实时新闻" # 简化版，可扩展抓取
                         curr_trend = "多头" if res['ema_bullish'] else "空头"
